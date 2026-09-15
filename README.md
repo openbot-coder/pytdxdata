@@ -1,5 +1,6 @@
 # pytdxdata
 
+[![CI](https://img.shields.io/github/actions/workflow/status/openbot-coder/pytdxdata/ci.yml?branch=main&label=CI)](https://github.com/openbot-coder/pytdxdata/actions/workflows/ci.yml)
 [![PyPI version](https://img.shields.io/pypi/v/pytdxdata)](https://pypi.org/project/pytdxdata/)
 [![Python](https://img.shields.io/pypi/pyversions/pytdxdata)](https://pypi.org/project/pytdxdata/)
 [![License](https://img.shields.io/pypi/l/pytdxdata)](https://github.com/openbot-coder/pytdxdata/blob/main/LICENSE)
