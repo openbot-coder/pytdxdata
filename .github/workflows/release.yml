@@ -1,0 +1,105 @@
+name: Release
+
+# 触发方式：
+#   1) 推送 v* 标签（如 v0.4.0）→ 测试 → 构建 → 发布到 PyPI
+#   2) 手动 workflow_dispatch → 只跑测试 + 构建，不发布（除非从 tag 上触发）
+#
+# PyPI Trusted Publisher 配置（项目 → Manage → Publishing）需填写：
+#   Owner            : openbot-coder
+#   Repository name  : pytdxdata
+#   Workflow name    : release.yml      <-- 必须与「本文件名」完全一致
+#   Environment name : pypi             <-- 必须与下方 environment.name 一致
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run tests
+        run: uv run pytest -q
+
+  build:
+    name: Build distributions
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.13"
+
+      # 防止「标签叫 v0.5.0、pyproject 里还是 0.4.0」这种低级事故
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          pkg_version="$(uv version --short)"
+          echo "git tag   : v${tag_version}"
+          echo "pyproject : ${pkg_version}"
+          if [ "${tag_version}" != "${pkg_version}" ]; then
+            echo "::error::git tag v${tag_version} 与 pyproject.toml 的版本 ${pkg_version} 不一致，已中止发布"
+            exit 1
+          fi
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Check distribution metadata
+        run: uvx twine check dist/*
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    # 只在 v* 标签上发布；手动 dispatch 到分支时只跑测试与构建
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pytdxdata
+    permissions:
+      # Trusted Publishing 必需：允许向 PyPI 换取 OIDC 短期令牌（无需任何 token 密钥）
+      id-token: write
+    steps:
+      - name: Retrieve distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
