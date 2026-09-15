@@ -28,3 +28,6 @@ examples/uvbuild_src/
 
 # 仓库备份
 _git_backup_*.bundle
+
+# MkDocs 构建产物
+site/

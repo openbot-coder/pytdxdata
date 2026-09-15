@@ -1,0 +1,106 @@
+# pytdxdata
+
+> 通达信(TongDaXin)行情数据客户端：动态连接池 + 双层 TTL 缓存 + 3 连接并发分页。纯 asyncio，零运行时依赖，覆盖 A股(沪/深/北)/港股/美股/期货/期权。
+
+pytdxdata 是一个 Python 库，从通达信**公开**行情服务器直接读取行情与服务器文件，无需账号。
+面向量化研究与历史数据落库场景（数据为 15 分钟延时，不适合实时交易）。
+
+## 安装与最小可用示例
+
+```bash
+pip install pytdxdata     # 或 uv add pytdxdata；要求 Python >= 3.11
+```
+
+```python
+import asyncio
+from pytdxdata import TdxData
+from pytdxdata.models import KlinePeriod, Market
+
+async def main():
+    async with TdxData() as td:            # 自动探测服务器、建连接池、初始化缓存
+        bars = await td.get_kline(Market.SH, "600000", KlinePeriod.DAY, count=2400)
+        print(bars[-1].datetime, bars[-1].close)
+
+asyncio.run(main())
+```
+
+## 心智模型（AI 必读）
+
+1. **入口只有一个类**：`TdxData`。所有数据获取都是它的公开异步方法（51 个数据方法，
+   另有 `start()` / `close()` 生命周期方法），必须在 `async with` 内使用。
+2. **标的需要「市场 + 代码」两个参数**。同一个 6 位代码在不同市场含义不同：
+   `(SH, "000001")` 是上证指数，`(SZ, "000001")` 是平安银行。
+3. **枚举取值没有直觉，必须用枚举成员，不要写数字字面量**：
+   - `Market`: SZ=0 / SH=1 / BJ=2
+   - `KlinePeriod`: MIN_5=0, MIN_15=1, MIN_30=2, MIN_60=3, **DAY=4**, WEEK=5, MONTH=6, **MIN_1=7**, MIN_3=8, YEAR=9, SEASON=10, YEAR_ALT=11
+   - `Adjust`: NONE=0 / QFQ=1(前复权) / HFQ=2(后复权)；**默认 NONE**，很多券商软件默认前复权，对比数据前先对齐
+   - `ExMarket`: 港股主板 HK_MAIN_BOARD=31 / 美股 US_STOCK=74 / 中金所 CFFEX_FUTURES=47 / 沪股票期权 SH_STOCK_OPTION=8 等，共 46 个成员
+4. **返回 `list[dataclass]`**，不是 DataFrame。需要 pandas 自行转换（见 cookbook）。包本身无任何运行时依赖。
+5. **实例要复用**：连接池与缓存都挂在 `TdxData` 实例上。长驻进程（Web 服务）应只创建一个实例，
+   不要每请求新建，否则等于每请求重建连接池且缓存全部失效。
+
+## 主要能力分组
+
+- **K 线**：`get_kline`（主接口，自动并发分页、支持复权与日期区间）、`get_kline_batch`（多股票并发）、
+  `get_kline_since`（增量）、`get_index_kline`、`get_stock_kline_with_indicators`
+- **报价**：`get_quotes`（五档，>80 只自动切批）、`get_stock_quotes_list`、`get_market_stat`
+- **逐笔 / 分时**：`get_transactions`（含 `trade_count` 成交笔数，支持历史日期）、`get_minute`、`get_minute_batch`
+- **证券列表**：`get_security_count`、`get_security_list`、`get_security_list_all`
+- **财务 / 除权**：`get_finance`（最新快照）、`get_xdxr`、`get_price_limits`（本地计算涨跌停）
+- **板块**：`get_board_list`、`get_board_members`、`get_board_ranking`、`get_board_change_ranking`、`get_belong_board`
+- **服务器文件（下载 + 解析一步到位）**：`get_block_parsed`（板块成分）、`get_industry_map`（通达信+申万行业）、
+  `get_financial_file_infos`、`get_financial_records_parsed`（历史专业财报）
+- **扩展市场**：`get_goods_list`、`get_goods_quotes`、`get_goods_transaction_all` 等，配合 `ExMarket` 使用
+- **批量**：`get_kline_batch` / `get_minute_batch`，多股票并发且连接池会分配到不同服务器
+
+## CLI
+
+安装后提供 `tdx` 命令，19 个子命令，不写代码即可取数：
+
+```bash
+tdx quotes sz000001 sh600000
+tdx kline sz000001 --period day --count 30 --adjust qfq
+tdx transactions sz000001 --date 20260811
+tdx board rank --type 1 --top 10
+tdx block block_gn.dat --limit 10 --codes
+tdx industry 600000 --search 银行
+tdx financial gpcw20260331.zip --limit 5
+```
+
+标的写法：`sz000001` / `sh600000` / `bj920992` / `hk00700` / `usAAPL` / `cffex:IFL0` / `000001`（6 位纯数字=指数）。
+
+## 关键陷阱
+
+- **`KlinePeriod.MIN_1` 走 MAC 通道并单连接串行分页**，这是刻意设计：并发分页在多服务器
+  历史深度不一致时会产生非确定性数据空洞。不要试图"优化"成并发。
+- **复权 K 线走 MAC 通道**，标准通道不提供复权数据。
+- **标准通道部分服务器在 `count < 100` 时返回空**，分页器已强制 `min_page=100` 规避。
+- **本地 Windows 上 `asyncio.new_event_loop()` 可能永久挂起**，根因是回环 `socket.socketpair()`
+  被本地代理/安全软件拦截。异步测试请在 Linux/WSL 运行。
+- **`FinanceRecord` 与 `FinancialRecord` 不同**：前者是最新一期财务快照（标准通道），
+  后者是历史多报告期专业财报（服务器文件，字段为原始 float 数组）。
+- 美股期权、港股期权在通达信协议内**无数据**。
+- 行情为 **15 分钟延时**，不适合实时交易决策。
+
+## 文档
+
+- [首页](https://openbot-coder.github.io/pytdxdata/)
+- [安装与配置](https://openbot-coder.github.io/pytdxdata/getting-started/)
+- [场景示例](https://openbot-coder.github.io/pytdxdata/cookbook/)
+- [CLI 手册](https://openbot-coder.github.io/pytdxdata/cli/)
+- [接口总览](https://openbot-coder.github.io/pytdxdata/api/)
+- [TdxData 方法签名](https://openbot-coder.github.io/pytdxdata/api/tdxdata/)
+- [枚举速查](https://openbot-coder.github.io/pytdxdata/api/enums/)
+- [数据模型](https://openbot-coder.github.io/pytdxdata/api/models/)
+- [架构总览](https://openbot-coder.github.io/pytdxdata/internals/architecture/)
+- [协议与命令](https://openbot-coder.github.io/pytdxdata/internals/protocol/)
+- [通道与数据源](https://openbot-coder.github.io/pytdxdata/internals/routing/)
+- [连接池与缓存](https://openbot-coder.github.io/pytdxdata/internals/cache-pool/)
+- [常见问题](https://openbot-coder.github.io/pytdxdata/faq/)
+
+## 可选
+
+- [完整接口清单](https://openbot-coder.github.io/pytdxdata/API_REFERENCE/)：手工维护的全量清单，含参数默认值
+- [更新日志](https://github.com/openbot-coder/pytdxdata/blob/main/CHANGELOG.md)
+- [GitHub 仓库](https://github.com/openbot-coder/pytdxdata)
+- [PyPI](https://pypi.org/project/pytdxdata/)

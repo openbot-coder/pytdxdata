@@ -1,0 +1,140 @@
+site_name: pytdxdata
+site_description: >-
+  通达信(TongDaXin)行情数据客户端 — 动态连接池 + 双层TTL缓存 + 3连接并发分页，
+  纯 asyncio 零运行时依赖，支持 A股/港股/美股/期货/期权
+site_url: https://openbot-coder.github.io/pytdxdata/
+site_author: openbot-coder
+repo_url: https://github.com/openbot-coder/pytdxdata
+repo_name: openbot-coder/pytdxdata
+edit_uri: edit/main/docs/
+copyright: MIT License · 仅供技术研究与教育用途，不构成任何投资建议
+
+theme:
+  name: material
+  language: zh
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: 切换到浅色模式
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - 首页: index.md
+  - 快速开始:
+      - 安装与配置: getting-started.md
+      - 场景示例: cookbook.md
+  - 命令行工具: cli.md
+  - API 参考:
+      - 接口总览: api/index.md
+      - TdxData 方法: api/tdxdata.md
+      - 枚举速查: api/enums.md
+      - 数据模型: api/models.md
+      - 技术指标: api/indicator.md
+      - 文件解析器: api/codec.md
+      - 完整接口清单: API_REFERENCE.md
+  - 深入原理:
+      - 架构总览: internals/architecture.md
+      - 协议与命令: internals/protocol.md
+      - 通道与数据源: internals/routing.md
+      - 连接池与缓存: internals/cache-pool.md
+  - 其他:
+      - 常见问题: faq.md
+      - 更新日志: changelog.md
+      - 参与贡献: contributing.md
+
+plugins:
+  - search:
+      lang:
+        - zh
+        - en
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            docstring_section_style: list
+            show_source: false
+            show_root_heading: true
+            show_root_toc_entry: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            group_by_category: true
+            show_category_heading: true
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            merge_init_into_class: true
+            filters:
+              - "!^_"
+              - "!^__"
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - toc:
+      permalink: true
+      toc_depth: 3
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.details
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+      restrict_base_path: false
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/openbot-coder/pytdxdata
+      name: GitHub 仓库
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/pytdxdata/
+      name: PyPI
+  generator: false
