@@ -2,17 +2,41 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.5.0] - 2026-09-15
 
 ### 新增
 
-- **文档站**（MkDocs + Material，自动部署到 <https://openbot-coder.github.io/pytdxdata/>）
-- [`llms.txt`](https://openbot-coder.github.io/pytdxdata/llms.txt) — 面向 LLM 的结构化摘要，供 AI 助手快速建立项目心智模型
+- **文档站**（MkDocs + Material + `mkdocstrings`），每次 push 自动构建并部署到
+  <https://openbot-coder.github.io/pytdxdata/>
+- **[`SKILL.md`](https://github.com/openbot-coder/pytdxdata/blob/main/SKILL.md)** — 面向 AI 编程助手的技能文件：三条必守约定、枚举取值表、
+  「想做什么 → 用哪个方法」决策表、9 条真实陷阱
+- [`llms.txt`](https://openbot-coder.github.io/pytdxdata/llms.txt) — 面向 LLM 的结构化摘要，随站点发布到根路径
 - `CHANGELOG.md` 独立成文件（此前内嵌在 README 中）
+- `scripts/check_docs.py` + CI 步骤 — **文档漂移检查**：代码有而文档漏写、或文档引用了已删除的方法，都会 fail
+- `tests/test_check_docs.py`（10 项）— 漂移检查器自身的自测
 
 ### 变更
 
-- README 瘦身为「入口层」：只保留定位、安装、30 秒上手、特性与目录，深层内容迁入文档站
+- **README 瘦身为「入口层」**：361 → 129 行。只保留定位 / 安装 / 30 秒上手 / 特性 / 文档导航 / 免责声明；
+  CLI 手册、API 表、通道路由、架构树、扩展市场、easy-tdx 对比、Changelog 全部移交文档站与 `CHANGELOG.md`
+- API 文档改由 `mkdocstrings` **从 docstring 实时生成**，不再手抄（根治漂移）
+- 漂移检查扩展为两档：`MUST_LIST_ALL`（须列全所有公开方法）+ `MUST_NOT_BE_STALE`（只需无过时引用），
+  并把 `SKILL.md` / `README.md` / `llms.txt` / 教程类页面一并纳入
+- 包元数据 `Documentation` 由仓库首页改指文档站
+- 测试用例 **99 → 109**
+
+### 文档
+
+- 新增文档站 19 页：快速开始 / 场景示例 / CLI / FAQ / 贡献指南 / 更新日志 /
+  API 参考（总览·TdxData·枚举·模型·指标·解析器）/ 深入原理（架构·协议·三池路由·缓存）
+- 明确口径：`TdxData` 公开方法共 **53 个**（= 51 个数据方法 + `start` / `close`），
+  此前各处笼统写的「51 个公开方法」不严，已统一更正
+
+### 修复
+
+- 修正**中文标题锚点被默认 slugify 剥光**导致跨页深链接全部失效的问题
+  （改用 `pymdownx.slugs.slugify`，并给被引用的标题加显式 ASCII id；`--strict` 不会报这个错，只能靠锚点检查兜住）
+- README 中标注的测试数量（85）与 pytest 实际收集数不符，已更正为 109 个用例
 
 ## [0.4.0] - 2026-09-15
 
@@ -73,7 +97,8 @@
 
 - 初始版本：动态连接池 + 双层 TTL 缓存 + 3 连接并发分页 + 双通道（标准 / MAC）+ 扩展市场（港股 / 美股 / 期货 / 期权）
 
-[Unreleased]: https://github.com/openbot-coder/pytdxdata/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/openbot-coder/pytdxdata/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/openbot-coder/pytdxdata/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/openbot-coder/pytdxdata/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/openbot-coder/pytdxdata/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/openbot-coder/pytdxdata/compare/v0.3.0...v0.3.1

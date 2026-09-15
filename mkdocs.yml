@@ -60,6 +60,7 @@ nav:
       - 协议与命令: internals/protocol.md
       - 通道与数据源: internals/routing.md
       - 连接池与缓存: internals/cache-pool.md
+  - AI 助手接入: ai.md
   - 其他:
       - 常见问题: faq.md
       - 更新日志: changelog.md

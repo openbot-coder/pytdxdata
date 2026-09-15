@@ -1,6 +1,6 @@
 [project]
 name = "pytdxdata"
-version = "0.4.0"
+version = "0.5.0"
 description = "通达信(TongDaXin)行情数据客户端：动态连接池 + 双层TTL缓存 + 3连接并发分页，纯asyncio零运行时依赖，支持A股/港股/美股/期货/期权"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,7 +27,7 @@ dependencies = []
 [project.urls]
 Homepage = "https://github.com/openbot-coder/pytdxdata"
 Repository = "https://github.com/openbot-coder/pytdxdata"
-Documentation = "https://github.com/openbot-coder/pytdxdata#readme"
+Documentation = "https://openbot-coder.github.io/pytdxdata/"
 
 [project.optional-dependencies]
 uvloop = ["uvloop>=0.21"]

@@ -100,6 +100,7 @@ tdx financial gpcw20260331.zip --limit 5
 
 ## 可选
 
+- [SKILL.md](https://raw.githubusercontent.com/openbot-coder/pytdxdata/main/SKILL.md)：面向 AI **编程**助手的技能文件（必守约定 / 枚举取值表 / 决策表 / 陷阱清单），比本文件更适合指导写代码
 - [完整接口清单](https://openbot-coder.github.io/pytdxdata/API_REFERENCE/)：手工维护的全量清单，含参数默认值
 - [更新日志](https://github.com/openbot-coder/pytdxdata/blob/main/CHANGELOG.md)
 - [GitHub 仓库](https://github.com/openbot-coder/pytdxdata)

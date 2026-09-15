@@ -70,9 +70,17 @@ asyncio.run(main())
 
     ---
 
-    51 个公开方法，从 docstring 实时生成，不会过期。
+    51 个数据方法（另有 `start` / `close`），从 docstring 实时生成，不会过期。
 
     [:octicons-arrow-right-24: API 参考](api/index.md)
+
+- **让 AI 助手写对代码**
+
+    ---
+
+    枚举取值反直觉，AI 凭常识几乎必错。装载 `SKILL.md` 就能一次写对。
+
+    [:octicons-arrow-right-24: AI 助手接入](ai.md)
 
 </div>
 
@@ -127,6 +135,7 @@ asyncio.run(main())
     - [连接池与缓存](internals/cache-pool.md)
 
 - **其他**
+    - [AI 助手接入](ai.md)
     - [常见问题](faq.md)
     - [更新日志](changelog.md)
     - [参与贡献](contributing.md)

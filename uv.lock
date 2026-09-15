@@ -535,7 +535,7 @@ wheels = [
 
 [[package]]
 name = "pytdxdata"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "." }
 
 [package.optional-dependencies]

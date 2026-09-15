@@ -1,6 +1,6 @@
 # pytdxdata 对外接口清单
 
-> 以 `src/pytdxdata` 源码为准整理（v0.4.0）。分四类：Python API / 数据模型 / 辅助模块 / CLI。
+> 以 `src/pytdxdata` 源码为准整理（v0.5.0）。分四类：Python API / 数据模型 / 辅助模块 / CLI。
 >
 > 方法与代码的一致性由 `scripts/check_docs.py` 在 CI 中校验。
 
@@ -144,7 +144,7 @@ from pytdxdata import (
 | `Market` | SZ=0 / SH=1 / BJ=2 |
 | `KlinePeriod` | MIN_5=0 / MIN_15=1 / MIN_30=2 / MIN_60=3 / DAY=4 / WEEK=5 / MONTH=6 / MIN_1=7 / MIN_3=8 / YEAR=9 / SEASON=10 / YEAR_ALT=11（`is_minute` 属性） |
 | `Adjust` | NONE=0 / QFQ=1 / HFQ=2 |
-| `ExMarket` | 52 个扩展市场：HK_MAIN_BOARD=31 / US_STOCK=74 / CFFEX_FUTURES=47 / ZZ_FUTURES=28 / DL_FUTURES=29 / SH_FUTURES=30 / GZ_FUTURES=66 / SH_STOCK_OPTION=8 / SZ_STOCK_OPTION=9 等 |
+| `ExMarket` | 46 个扩展市场：HK_MAIN_BOARD=31 / US_STOCK=74 / CFFEX_FUTURES=47 / ZZ_FUTURES=28 / DL_FUTURES=29 / SH_FUTURES=30 / GZ_FUTURES=66 / SH_STOCK_OPTION=8 / SZ_STOCK_OPTION=9 等 |
 
 **dataclass（均为 `@dataclass(slots=True)`）**
 
