@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv
+
+# IDE / AI assistant data
+.codebuddy/
+.workbuddy/
+
+# 代码图谱索引（本地生成）
+.codegraph/
+
+# 本地开发脚本与第三方源码归档（不随仓库发布）
+examples/archive/
+examples/pytdxwrapper_src/
+examples/uvbuild_src/
+
+# 根目录未使用的服务器清单副本（生效副本为 src/pytdxdata/servers.json）
+/servers.json
+
+# 仓库备份
+_git_backup_*.bundle

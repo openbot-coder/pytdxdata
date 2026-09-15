@@ -1,0 +1,488 @@
+{
+  "version": "2026-08-12",
+  "note": "当日全量测速入库(2026-09-08): 入池=9台 (排名前10或延迟<200ms)",
+  "servers": [
+    {
+      "ip": "139.9.52.158",
+      "name": "国泰君安深圳",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "ok",
+      "latency": null,
+      "checked_at": "2026-08-21 11:23:14",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-21"
+    },
+    {
+      "ip": "103.251.85.94",
+      "name": "国泰君安上海",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 0.481,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "58.67.221.146",
+      "name": "中信短线宝21",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "ok",
+      "latency": 0.254,
+      "checked_at": "2026-09-08 10:05:12",
+      "source": "probe-2026-08-12",
+      "fast_pool": true,
+      "checked_date": "2026-09-08"
+    },
+    {
+      "ip": "59.36.5.11",
+      "name": "安信",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "ok",
+      "latency": 0.254,
+      "checked_at": "2026-09-08 10:05:12",
+      "source": "probe-2026-08-12",
+      "fast_pool": true,
+      "checked_date": "2026-09-08"
+    },
+    {
+      "ip": "103.221.142.82",
+      "name": "国泰君安江苏",
+      "protocols": [
+        "standard",
+        "mac",
+        "ex"
+      ],
+      "handshake": "setup",
+      "status": "slow",
+      "latency": 0.487,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "218.106.92.182",
+      "name": "华林",
+      "protocols": [
+        "standard"
+      ],
+      "handshake": null,
+      "status": "ok",
+      "latency": 0.371,
+      "checked_at": "2026-09-08 10:05:12",
+      "source": "probe-2026-08-12",
+      "fast_pool": true,
+      "checked_date": "2026-09-08"
+    },
+    {
+      "ip": "60.12.136.251",
+      "name": "中信短线宝22",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "ok",
+      "latency": 0.37,
+      "checked_at": "2026-09-08 10:05:12",
+      "source": "probe-2026-08-12",
+      "fast_pool": true,
+      "checked_date": "2026-09-08"
+    },
+    {
+      "ip": "218.106.92.183",
+      "name": "华林",
+      "protocols": [
+        "standard"
+      ],
+      "handshake": null,
+      "status": "ok",
+      "latency": 0.377,
+      "checked_at": "2026-09-08 10:05:12",
+      "source": "probe-2026-08-12",
+      "fast_pool": true,
+      "checked_date": "2026-09-08"
+    },
+    {
+      "ip": "60.12.136.250",
+      "name": "中信短线宝26",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "ok",
+      "latency": 0.373,
+      "checked_at": "2026-09-08 10:05:12",
+      "source": "probe-2026-08-12",
+      "fast_pool": true,
+      "checked_date": "2026-09-08"
+    },
+    {
+      "ip": "115.238.90.170",
+      "name": "中信短线宝23",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 0.482,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "220.178.55.86",
+      "name": "华林",
+      "protocols": [
+        "standard"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 0.479,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "220.178.55.71",
+      "name": "华林",
+      "protocols": [
+        "standard"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 0.47,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "180.153.18.170",
+      "name": "中信短线宝1",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 0.438,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "115.238.90.165",
+      "name": "杭州J4",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 0.476,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "60.191.117.167",
+      "name": "杭州J1",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "ok",
+      "latency": 0.362,
+      "checked_at": "2026-09-08 10:05:12",
+      "source": "probe-2026-08-12",
+      "fast_pool": true,
+      "checked_date": "2026-09-08"
+    },
+    {
+      "ip": "218.75.126.9",
+      "name": "杭州J3",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 0.481,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "115.238.56.198",
+      "name": "杭州J2",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "ok",
+      "latency": 0.362,
+      "checked_at": "2026-09-08 10:05:12",
+      "source": "probe-2026-08-12",
+      "fast_pool": true,
+      "checked_date": "2026-09-08"
+    },
+    {
+      "ip": "117.34.114.16",
+      "name": "国泰君安",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 1.575,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "159.75.55.232",
+      "name": "通达信深圳9",
+      "protocols": [
+        "standard"
+      ],
+      "handshake": null,
+      "status": "ok",
+      "latency": 0.244,
+      "checked_at": "2026-09-08 10:05:12",
+      "source": "probe-2026-08-12",
+      "fast_pool": true,
+      "checked_date": "2026-09-08"
+    },
+    {
+      "ip": "117.34.114.17",
+      "name": "国泰君安",
+      "protocols": [
+        "standard"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 1.573,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "117.34.114.14",
+      "name": "国泰君安",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 0.508,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "117.34.114.15",
+      "name": "国泰君安",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 0.636,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "117.34.114.13",
+      "name": "国泰君安",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 0.608,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "117.34.114.27",
+      "name": "国泰君安",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 1.138,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "117.34.114.18",
+      "name": "国泰君安",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 0.969,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "117.34.114.20",
+      "name": "国泰君安",
+      "protocols": [
+        "standard",
+        "mac"
+      ],
+      "handshake": null,
+      "status": "slow",
+      "latency": 0.526,
+      "checked_at": "2026-08-19 15:37:35",
+      "source": "probe-2026-08-12",
+      "fast_pool": false,
+      "checked_date": "2026-08-19"
+    },
+    {
+      "ip": "117.34.114.30",
+      "name": "国泰君安",
+      "protocols": [
+        "standard"
+      ],
+      "handshake": null,
+      "status": "fail",
+      "latency": null,
+      "checked_at": "2026-08-12 18:36:21",
+      "source": "probe-2026-08-12"
+    },
+    {
+      "ip": "121.37.207.165",
+      "name": "MAC专用",
+      "protocols": [
+        "mac"
+      ],
+      "handshake": null,
+      "status": "ok",
+      "latency": 0.249,
+      "checked_at": "2026-08-12 18:36:17",
+      "source": "probe-2026-08-12"
+    },
+    {
+      "ip": "121.36.248.138",
+      "name": "MAC专用",
+      "protocols": [
+        "mac"
+      ],
+      "handshake": null,
+      "status": "ok",
+      "latency": 0.436,
+      "checked_at": "2026-08-12 18:36:17",
+      "source": "probe-2026-08-12"
+    },
+    {
+      "ip": "123.60.47.136",
+      "name": "MAC专用",
+      "protocols": [
+        "mac"
+      ],
+      "handshake": null,
+      "status": "ok",
+      "latency": 0.476,
+      "checked_at": "2026-08-12 18:36:17",
+      "source": "probe-2026-08-12"
+    },
+    {
+      "ip": "116.205.135.205",
+      "name": "MAC EX专用",
+      "protocols": [
+        "ex"
+      ],
+      "handshake": "login",
+      "status": "ok",
+      "latency": 0.192,
+      "checked_at": "2026-08-12 18:36:17",
+      "source": "probe-2026-08-12"
+    },
+    {
+      "ip": "121.37.232.167",
+      "name": "MAC EX专用",
+      "protocols": [
+        "ex"
+      ],
+      "handshake": "login",
+      "status": "ok",
+      "latency": 0.194,
+      "checked_at": "2026-08-12 18:36:17",
+      "source": "probe-2026-08-12"
+    },
+    {
+      "ip": "116.205.143.214",
+      "name": "通达信扩展市场广州1",
+      "protocols": [
+        "ex"
+      ],
+      "handshake": "setup",
+      "status": "ok",
+      "latency": 0.192,
+      "checked_at": "2026-08-12 18:36:17",
+      "source": "probe-2026-08-12"
+    },
+    {
+      "ip": "s1",
+      "name": "s1",
+      "protocols": [
+        "standard"
+      ],
+      "status": "unknown",
+      "latency": null,
+      "fast_pool": false,
+      "checked_date": "2026-08-19",
+      "checked_at": "2026-08-19 15:34:45"
+    }
+  ],
+  "checked_date": "2026-09-08"
+}

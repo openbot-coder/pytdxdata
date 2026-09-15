@@ -1,0 +1,56 @@
+[project]
+name = "pytdxdata"
+version = "0.4.0"
+description = "通达信(TongDaXin)行情数据客户端：动态连接池 + 双层TTL缓存 + 3连接并发分页，纯asyncio零运行时依赖，支持A股/港股/美股/期货/期权"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["tdx", "trading", "stock", "kline", "quote", "通达信", "A股", "港股", "美股", "期货", "asyncio", "quant"]
+authors = [
+    { name = "openbot-coder", email = "openbot-coder@users.noreply.github.com" }
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Framework :: AsyncIO",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/openbot-coder/pytdxdata"
+Repository = "https://github.com/openbot-coder/pytdxdata"
+Documentation = "https://github.com/openbot-coder/pytdxdata#readme"
+
+[project.optional-dependencies]
+uvloop = ["uvloop>=0.21"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "ruff>=0.6"]
+
+[project.scripts]
+tdx = "pytdxdata.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.1,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
