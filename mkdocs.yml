@@ -64,6 +64,7 @@ nav:
   - 其他:
       - 常见问题: faq.md
       - 更新日志: changelog.md
+      - 接口重构审查: refactor-audit.md
       - 参与贡献: contributing.md
 
 plugins:

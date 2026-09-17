@@ -32,12 +32,12 @@ PKG_DIR = ROOT / "src" / "pytdxdata"
 
 # 必须**列全**所有公开方法的文档（漏写 = 漂移）
 MUST_LIST_ALL = [
-    ROOT / "docs" / "api" / "index.md",
     ROOT / "docs" / "API_REFERENCE.md",
 ]
 
 # 只需**不提到已删除的方法**的文档：
-# 这些是入口 / 教程 / 精选清单，本来就不要求列全，但绝不能引用已不存在的方法
+# 这些是入口 / 教程 / 精选清单 / 接口总览（只列推荐的统一接口，旧方法不强制列出），
+# 但绝不能引用已不存在的方法
 MUST_NOT_BE_STALE = [
     ROOT / "SKILL.md",
     ROOT / "README.md",
@@ -48,6 +48,8 @@ MUST_NOT_BE_STALE = [
     ROOT / "docs" / "faq.md",
     ROOT / "docs" / "cli.md",
     ROOT / "docs" / "ai.md",
+    ROOT / "docs" / "api" / "index.md",
+    ROOT / "docs" / "refactor-audit.md",
 ]
 
 

@@ -252,7 +252,7 @@ def _new_tdxdata() -> TdxData:
 async def test_api_get_block_parsed():
     td = _new_tdxdata()
     raw = _make_block_dat([("银行", ["000001"], 1, 1)])
-    with mock.patch.object(td, "get_block_info", new=mock.AsyncMock(return_value=raw)):
+    with mock.patch.object(td, "get_file", new=mock.AsyncMock(return_value=raw)):
         blocks = await td.get_block_parsed("block_gn.dat")
     assert len(blocks) == 1
     assert blocks[0].category == 2  # gn -> 概念
@@ -263,7 +263,7 @@ async def test_api_get_industry_map():
     td = _new_tdxdata()
     raw = "0|000001|A01|||S01\n".encode("gbk")
     patched = mock.AsyncMock(return_value=raw)
-    with mock.patch.object(td, "get_report_file", new=patched):
+    with mock.patch.object(td, "get_file", new=patched):
         result = await td.get_industry_map()
     patched.assert_awaited_once_with("tdxhy.cfg")
     assert result["000001"].sw_industry == "S01"
@@ -274,7 +274,7 @@ async def test_api_get_financial_file_infos():
     td = _new_tdxdata()
     raw = b"gpcw20260331.zip,abc,1024\n"
     patched = mock.AsyncMock(return_value=raw)
-    with mock.patch.object(td, "get_report_file", new=patched):
+    with mock.patch.object(td, "get_file", new=patched):
         infos = await td.get_financial_file_infos()
     patched.assert_awaited_once_with("tdxfin/gpcw.txt")
     assert infos[0].filesize == 1024
@@ -284,7 +284,7 @@ async def test_api_get_financial_file_infos():
 async def test_api_get_financial_records_parsed():
     td = _new_tdxdata()
     zip_bytes = _make_financial_zip(_valid_two_record_dat())
-    with mock.patch.object(td, "get_report_file",
+    with mock.patch.object(td, "get_file",
                            new=mock.AsyncMock(return_value=zip_bytes)):
         recs = await td.get_financial_records_parsed("tdxfin/gpcw20260331.zip")
     assert len(recs) == 2
@@ -294,7 +294,7 @@ async def test_api_get_financial_records_parsed():
 @pytest.mark.asyncio
 async def test_api_get_financial_records_parsed_empty_zip_data():
     td = _new_tdxdata()
-    with mock.patch.object(td, "get_report_file",
+    with mock.patch.object(td, "get_file",
                            new=mock.AsyncMock(return_value=b"")):
         assert await td.get_financial_records_parsed("tdxfin/gpcw20260331.zip") == []
 
@@ -303,7 +303,7 @@ async def test_api_get_financial_records_parsed_empty_zip_data():
 async def test_api_get_financial_records_parsed_no_dat_member():
     td = _new_tdxdata()
     zip_bytes = _make_financial_zip(b"whatever", inner_name="readme.txt")
-    with mock.patch.object(td, "get_report_file",
+    with mock.patch.object(td, "get_file",
                            new=mock.AsyncMock(return_value=zip_bytes)):
         assert await td.get_financial_records_parsed("nodate.zip") == []
 
@@ -313,7 +313,7 @@ async def test_api_get_financial_records_parsed_no_date_in_name():
     """文件名无 8 位日期 -> 回退用 .dat 头部报告期。"""
     td = _new_tdxdata()
     zip_bytes = _make_financial_zip(_valid_two_record_dat())
-    with mock.patch.object(td, "get_report_file",
+    with mock.patch.object(td, "get_file",
                            new=mock.AsyncMock(return_value=zip_bytes)):
         recs = await td.get_financial_records_parsed("gpcw.zip")
     assert recs[0].report_date == 20260331

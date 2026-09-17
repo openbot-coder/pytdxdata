@@ -85,13 +85,17 @@ KlinePeriod.DAY.is_minute      # False
 | `ExMarket.US_STOCK` | `74` | **美股（最常用）** |
 
 ```python
-from pytdxdata.models import ExMarket, KlinePeriod
+from pytdxdata.models import KlinePeriod
 
-await td.get_kline(ExMarket.HK_MAIN_BOARD, "00700", KlinePeriod.DAY, count=700)   # 腾讯
-await td.get_kline(ExMarket.US_STOCK, "AAPL", KlinePeriod.DAY, count=700)         # 苹果
-await td.get_kline(ExMarket.CFFEX_FUTURES, "IFL0", KlinePeriod.DAY, count=700)    # 股指期货
-await td.get_kline(ExMarket.SH_STOCK_OPTION, "10010971", KlinePeriod.DAY, count=700)
+# 统一接口用字符串前缀指定扩展市场（推荐）：
+await td.get_bars("hk00700", KlinePeriod.DAY, count=700)                    # 腾讯
+await td.get_bars("usAAPL", KlinePeriod.DAY, count=700)                     # 苹果
+await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)                 # 股指期货
+await td.get_bars("sh_stock_option:10010971", KlinePeriod.DAY, count=700)   # 沪股票期权
 ```
+
+> 上表的 `ExMarket` 枚举值用于查阅与内部协议；统一接口不再直接传枚举，改用字符串前缀
+> （短前缀 `hk` / `us` / `cffex` …，无短别名的成员用枚举名小写 + 冒号，如 `sh_stock_option:10010971`）。
 
 ### 完整成员列表
 

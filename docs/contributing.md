@@ -94,8 +94,8 @@ git push origin feat/xxx
 3. 提交并 push 到 `main`
 4. 打标签并推送：
    ```bash
-   git tag v0.5.0
-   git push origin v0.5.0
+   git tag v0.6.0
+   git push origin v0.6.0
    ```
 
 推 tag 会自动触发 GitHub Actions：**test → build（含版本号一致性校验）→ OIDC 免密钥发布到 PyPI**。
@@ -105,12 +105,12 @@ git push origin feat/xxx
     同名 tag **不能直接重推**（push 无变化，workflow 不会触发）。先删再推：
 
     ```bash
-    git push --delete origin v0.5.0
-    git tag -d v0.5.0 && git tag v0.5.0
-    git push origin v0.5.0
+    git push --delete origin v0.6.0
+    git tag -d v0.6.0 && git tag v0.6.0
+    git push origin v0.6.0
     ```
 
-    或直接手动触发：`gh workflow run release.yml --ref v0.5.0`
+    或直接手动触发：`gh workflow run release.yml --ref v0.6.0`
 
 文档站由 `.github/workflows/docs.yml` 在 push `main` 时自动部署到
 <https://openbot-coder.github.io/pytdxdata/>。

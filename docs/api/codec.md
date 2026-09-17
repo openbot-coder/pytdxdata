@@ -26,7 +26,7 @@ blocks = parse_block_dat(open("block_gn.dat", "rb").read(), "block_gn.dat")
     如果不想自己管下载，直接用封装好的方法（内部就是调这些解析器）：
 
     `get_block_parsed()` / `get_industry_map()` / `get_financial_file_infos()` / `get_financial_records_parsed()`
-    — 见 [接口总览 → 除权 / 财务 / F10 / 文件](index.md#file-methods)。
+    — 见 [完整接口清单 → 除权 / 财务 / F10 / 文件](../API_REFERENCE.md#file-methods)。
 
 ## 关键细节
 

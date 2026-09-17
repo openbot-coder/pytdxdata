@@ -1,6 +1,6 @@
 # pytdxdata 对外接口清单
 
-> 以 `src/pytdxdata` 源码为准整理（v0.5.0）。分四类：Python API / 数据模型 / 辅助模块 / CLI。
+> 以 `src/pytdxdata` 源码为准整理（v0.6.0）。分四类：Python API / 数据模型 / 辅助模块 / CLI。
 >
 > 方法与代码的一致性由 `scripts/check_docs.py` 在 CI 中校验。
 
@@ -39,7 +39,50 @@ from pytdxdata import (
 | `async close()` | 关闭全部池与缓存 |
 | `async with TdxData() as td:` | 上下文管理器，自动 start/close |
 
-### 2.1 K线（共 6 个）
+### 2.1 统一接口（v0.6+ 推荐）{#unified}
+
+以下方法在 v0.6 新增，标的一律用字符串（`sz000001` / `hk00700` / `usAAPL` / `cffex:IFL0`）。
+
+#### 标的清单
+
+| 方法 | 返回 | 说明 |
+|------|------|------|
+| `get_universe(market=None)` | `list[SecurityInfo]` | 跨市场标的清单（A 股+港股+美股+期货/期权） |
+
+#### 报价
+
+| 方法 | 返回 | 说明 |
+|------|------|------|
+| `get_quotes(symbols, *, fields=None)` | `list[SecurityQuote]` | 跨市场混合报价（A 股标准五档；给了 fields 走 MAC/EX 字段位有 name） |
+| `get_snapshot(symbols)` | `list[SymbolSnapshot]` | 个股特征快照（A 股） |
+| `get_auction(symbols)` | `list[AuctionItem]` | 集合竞价（A 股） |
+| `get_capital_flow(symbols)` | `list[CapitalFlow]` | 个股资金流向（A 股） |
+
+#### K线
+
+| 方法 | 返回 | 说明 |
+|------|------|------|
+| `get_bars(symbols, period=DAY, *, start=0, count=800, adjust=None, start_date=None, end_date=None, concurrency=6)` | `list[SecurityBar]` | 跨市场 K 线（自动判指数、复权走 MAC、并发分页、日期区间二分） |
+| `get_indicators(symbols, indicators, *, period=DAY, count=30, adjust=None, params=None)` | `list[IndicatorSet]` | K 线+技术指标（MACD/KDJ/RSI/BOLL/MA/EMA） |
+
+#### 逐笔与分时
+
+| 方法 | 返回 | 说明 |
+|------|------|------|
+| `get_ticks(symbols, *, date=None, start=0, count=None, concurrency=6)` | `list[TransactionRecord]` | 跨市场逐笔成交 |
+| `get_minutes(symbols, *, date=None, sampling=False, concurrency=6)` | `list[MinuteBar]` | 跨市场分时（sampling=True 取缩略采样） |
+
+#### 公司信息/文件/板块
+
+| 方法 | 返回 | 说明 |
+|------|------|------|
+| `get_f10(symbol, section=None, *, offset=0, length=65535)` | `list \| str` | F10 公司资料 |
+| `get_file(name)` | `bytes` | 服务器文件原始字节（自动选通道） |
+| `get_boards(kind="all", *, count=10000)` | `list[BoardInfo]` | 板块列表 |
+| `get_board_members(board, *, fields=None, count=100000)` | `list[SecurityQuote]` | 板块成分股报价（归一模型） |
+| `get_board_of(symbols)` | `list[BelongBoard]` | 个股所属板块 |
+
+### 2.2 K线（旧接口，共 6 个） {#legacy-kline}
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
@@ -50,16 +93,16 @@ from pytdxdata import (
 | `get_stock_kline_with_indicators(market, code, indicators, *, period=DAY, count=30, adjust=None, params=None)` | `dict` | K线+技术指标（MACD/KDJ/RSI/BOLL/MA/EMA） |
 | `get_kline_offset(offset=0, count=1)` | `tuple[int, int]` | K线偏移信息（MAC） |
 
-### 2.2 报价（共 4 个）
+### 2.3 报价（旧接口，共 4 个） {#legacy-quote}
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
-| `get_quotes(stocks)` | `list[SecurityQuote]` | 五档报价；>80 只自动切批；TTL 5s |
+| `get_quotes(symbols, *, fields=None)` | `list[SecurityQuote]` | 五档报价；>80 只自动切批；TTL 5s |
 | `get_stock_quotes(stocks, bits=None)` | `list[MemberQuote]` | MAC 自定义字段报价（≤80只/次） |
 | `get_stock_quotes_list(category, *, start=0, count=80, sort_type=0)` | `list[MemberQuote]` | 市场分类报价（0沪A/2深A/6全A/8科创/14创业） |
 | `get_market_stat()` | `MarketStat` | 全市场统计（涨跌家数/总额/市值/涨跌停数） |
 
-### 2.3 逐笔成交 / 分时（共 4 个）
+### 2.4 逐笔成交 / 分时（旧接口，共 4 个） {#legacy-tick}
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
@@ -68,7 +111,7 @@ from pytdxdata import (
 | `get_minute_batch(stocks, *, date=None, concurrency=6)` | `dict[str, list[MinuteBar]]` | 批量分时 |
 | `get_chart_sampling(market, code)` | `list[float]` | 分时缩略采样（A股，MAC 0x254D） |
 
-### 2.4 证券列表（共 3 个）
+### 2.5 证券列表（旧接口，共 3 个） {#legacy-list}
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
@@ -76,13 +119,13 @@ from pytdxdata import (
 | `get_security_list(market, *, start=0, count=None)` | `list[SecurityInfo]` | count=None=全部（先查总数防死循环） |
 | `get_security_list_all(market)` | `list[SecurityInfo]` | 全市场列表（高并发一次拉完，缓存 1 天） |
 
-### 2.5 除权 / 财务 / F10 / 文件（共 15 个）
+### 2.6 除权 / 财务 / F10 / 文件（旧接口，共 15 个） {#file-methods}
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
-| `get_xdxr(market, code)` | `list[XdxrRecord]` | 除权除息历史（标准） |
-| `get_finance(market, code)` | `FinanceRecord \| None` | 财务快照（标准） |
-| `get_price_limits(market, code, name, pre_close, listed_days=9999)` | `tuple[float\|None, float\|None]` | 涨跌停价（本地计算） |
+| `get_xdxr(symbols)` | `list[XdxrRecord]` | 除权除息历史（标准） |
+| `get_finance(symbols)` | `list[FinanceRecord]` | 财务快照（标准；无数据的标的跳过） |
+| `get_price_limits(symbol, name=None, pre_close=None, listed_days=9999)` | `tuple[float\|None, float\|None]` | 涨跌停价（本地计算） |
 | `get_company_info_category(market, code)` | `list` | F10 目录（标准） |
 | `get_company_info_content(market, code, filename, offset=0, length=65535)` | `str` | F10 内容（分块） |
 | `get_block_info(filename)` | `bytes` | 板块文件**原始字节**（先查元数据再分块下载） |
@@ -99,7 +142,7 @@ from pytdxdata import (
 > 解析层独立于网络层：解析器位于 `pytdxdata.codec`（纯标准库 `struct`/`zipfile`），可脱网单测；
 > 原 `get_*` 返回 `bytes`/`list[str]` 的方法保持**向后兼容**，解析版为**新增**方法。
 
-### 2.6 板块（共 6 个）
+### 2.7 板块（旧接口，共 6 个） {#legacy-board}
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
@@ -110,17 +153,17 @@ from pytdxdata import (
 | `get_board_ranking(board_type=1, top_n=20)` | `list[dict]` | 板块涨跌幅排行 |
 | `get_board_change_ranking(board_type=1, days=20, top_n=20)` | `list[dict]` | 板块 N 日涨跌幅排行（板块指数K线） |
 
-### 2.7 MAC 扩展：竞价 / 异动 / 快照 / 资金流 / 服务器（共 5 个）
+### 2.8 MAC 扩展：竞价 / 异动 / 快照 / 资金流 / 服务器（旧接口，共 5 个） {#legacy-mac}
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
-| `get_auction(market, code)` | `list[AuctionItem]` | 集合竞价 |
-| `get_unusual(market, start=0, count=600)` | `list[UnusualItem]` | 市场异动 |
+| `get_auction(symbols)` | `list[AuctionItem]` | 集合竞价 |
+| `get_unusual(market="all", *, start=0, count=600)` | `list[UnusualItem]` | 市场异动 |
 | `get_symbol_info(market, code)` | `SymbolSnapshot` | 个股特征快照 |
-| `get_capital_flow(market, code)` | `CapitalFlow` | 个股资金流向 |
+| `get_capital_flow(symbols)` | `list[CapitalFlow]` | 个股资金流向 |
 | `get_server_info()` | `ServerInfo` | 服务器交易时段信息 |
 
-### 2.8 EX 扩展市场（港股/美股/期货/期权，共 8 个）
+### 2.9 EX 扩展市场（旧接口，港股/美股/期货/期权，共 8 个） {#legacy-ex}
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
@@ -133,7 +176,8 @@ from pytdxdata import (
 | `get_goods_transaction(market, code, *, ymd=0, start=0, count=1800)` | `list[dict]` | 扩展市场逐笔（港股 0x23FC/0x2406） |
 | `get_goods_transaction_all(market, code, ymd=0)` | `list[dict]` | 港股全量逐笔（自动翻页，≤50页/9万条） |
 
-**合计：`TdxData` 公开异步方法 51 个**（另有 `_execute_standard/_execute_mac/_execute_ex` 等内部执行方法）。
+**合计：`TdxData` 公开异步方法 63 个** = 28 个统一接口 + 33 个 deprecated 别名 + `start`/`close`
+（另有 `_execute_standard` / `_execute_mac` / `_execute_ex` 等内部执行方法）。
 
 ## 三、数据模型（`pytdxdata.models`）
 

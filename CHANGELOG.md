@@ -2,6 +2,69 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] - 2026-09-16
+
+### 新增
+
+- **统一对外接口**：一个数据类型 = 一个方法，跨市场自动选路。
+  标的统用字符串写法（`sz000001` / `hk00700` / `usAAPL` / `cffex:IFL0`），
+  A股/港股/美股/期货/期权混合查询一次返回。旧的 51 个按通道/市场分裂的接口中，
+  33 个保留为 deprecated 别名（运行时发出 `DeprecationWarning`，**1.0 移除**），
+  另 18 个（`get_quotes` / `get_xdxr` / `get_finance` / `get_auction` / `get_capital_flow` /
+  `get_market_stat` / `get_unusual` / `get_server_info` / `get_kline_offset` /
+  `get_board_members` / `get_board_summary` / `get_board_ranking` / `get_board_change_ranking` /
+  `get_block_parsed` / `get_industry_map` / `get_financial_file_infos` /
+  `get_financial_records_parsed` / `get_price_limits`）同名升级为统一接口。
+
+  | 数据类型 | 新接口 | 合并掉的旧接口 |
+  |----------|--------|----------------|
+  | 标的清单 | `get_universe(market)` | get_security_count + get_security_list + get_security_list_all + get_goods_count + get_goods_list |
+  | 报价 | `get_quotes(symbols, *, fields)` | get_quotes + get_stock_quotes + get_goods_quotes + get_goods_quotes_list |
+  | K线 | `get_bars(symbols, period, ...)` | get_kline + get_index_kline + get_kline_batch + get_kline_since |
+  | 指标 | `get_indicators(symbols, indicators, ...)` | get_stock_kline_with_indicators |
+  | 逐笔 | `get_ticks(symbols, *, date)` | get_transactions + get_goods_transaction + get_goods_transaction_all |
+  | 分时 | `get_minutes(symbols, *, date, sampling)` | get_minute + get_minute_batch + get_chart_sampling + get_goods_chart_sampling + get_goods_tick_chart |
+  | F10 | `get_f10(symbol, section)` | get_company_info_category + get_company_info_content |
+  | 文件 | `get_file(name)` | get_block_info + get_report_file + get_file_meta + download_file |
+  | 财务文件 | `get_financial_file_infos()` / `get_financial_records_parsed(fn)` | get_financial_file_list + get_financial_records |
+  | 板块列表 | `get_boards(kind)` | get_board_list |
+  | 板块成员 | `get_board_members(board)` → 归一 `SecurityQuote` | get_board_members + get_stock_quotes_list（分类报价） |
+  | 个股板块 | `get_board_of(symbols)` | get_belong_board |
+  | 快照 | `get_snapshot(symbols)` | get_symbol_info |
+
+  > `TdxData` 公开方法 63 个 = **28 个统一接口** + 33 个 deprecated 别名 + `start`/`close`。
+  > 统一接口一律只接受字符串标的；同名旧方法不再兼容 `(market, code)` 元组写法。
+
+- **库层标的解析** `pytdxdata.symbols`（原仅 CLI 内有）：`parse_symbol` / `format_symbol` /
+  `parse_symbols` / `market_targets` / `is_cn_index`；裸 6 位数字视为沪市指数。
+- **归一数据模型**：`SecurityBar` / `SecurityQuote` / `TransactionRecord` / `MinuteBar` /
+  `SecurityInfo` 等均新增 `symbol`（规范化标的串）/ `name` / `fields`（原始字段位兜底），
+  老构造写法不受影响（新字段有默认值）。
+- `IndicatorSet` dataclass（`get_indicators` 返回单元：`bars + indicators` 组合）。
+- `CacheKey.quote_key(..., tag=)` 支持按取数口径（标准五档 / MAC 字段位）隔离缓存。
+
+### 修复
+
+- **分页器连接泄漏**：`Paginator._worker` 换连接后旧连接不释放、池子被耗干
+  （`_Slot` 包装 + 归还时按槽释放）。
+- **日期区间 K线返回 0 条**：标准通道 `start` 偏移方向是递减（0=最新），旧的二分
+  假设递增。改为运行时探测方向再二分（`_offset_descending` / `_bisect_offset`）。
+- **池子全冷却死等**：所有服务器进冷却后 `acquire` 排队 30s 超时。
+  补 `ignore_cooldown=True` 兜底，避免无人持有连接时永久等待。
+- `HealthEngine.COOLDOWN_SECONDS` 保持 120s（旧的 FAIL_STREAK_COOLDOWN=1 意味着
+  任意一次通信失败即冷却，实测下正常服务器不应被冷却，保留该行为）。
+
+### 变更
+
+- **`docs/api/index.md` 接口总览**重新组织：统一接口（推荐）优先于旧接口列表。
+- `scripts/check_docs.py`：`docs/api/index.md` 从 `MUST_LIST_ALL` 移到
+  `MUST_NOT_BE_STALE`（只列推荐的统一接口，旧方法不强制出现在总览页）。
+- CLI `tdx quotes` 改为统一 `td.get_quotes(symbols)`（跨市场混合报价）。
+- CLI `tdx kline` 改为统一 `td.get_bars(sym, period)`。
+- 测试 127 个用例全绿（新增 codec mock `get_file` 适配 + check_docs 新方法列表 +
+  `tests/test_all_interfaces.py` 全接口回归：mock 连接逐个调用全部 63 个公开方法，
+  并以「覆盖哨兵」断言无方法遗漏）。
+
 ## [0.5.0] - 2026-09-15
 
 ### 新增
@@ -97,7 +160,8 @@
 
 - 初始版本：动态连接池 + 双层 TTL 缓存 + 3 连接并发分页 + 双通道（标准 / MAC）+ 扩展市场（港股 / 美股 / 期货 / 期权）
 
-[Unreleased]: https://github.com/openbot-coder/pytdxdata/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/openbot-coder/pytdxdata/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/openbot-coder/pytdxdata/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/openbot-coder/pytdxdata/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/openbot-coder/pytdxdata/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/openbot-coder/pytdxdata/compare/v0.3.1...v0.3.2

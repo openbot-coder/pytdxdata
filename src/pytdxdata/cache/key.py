@@ -40,7 +40,12 @@ class CacheKey:
         )
 
     @classmethod
-    def quote_key(cls, stocks: Sequence[tuple[int, str]]) -> "CacheKey":
-        """报价键：对股票集规范化排序，顺序无关可命中。"""
+    def quote_key(cls, stocks: Sequence[tuple[int, str]],
+                  tag: str = "") -> "CacheKey":
+        """报价键：对股票集规范化排序，顺序无关可命中。
+
+        ``tag`` 区分取数口径（标准五档 / MAC·EX 字段位），不同口径不互相命中。
+        """
         norm = sorted(f"{m}:{c}" for m, c in stocks)
-        return cls(category="quote", extra=",".join(norm))
+        extra = ",".join(norm)
+        return cls(category="quote", extra=f"{tag}#{extra}" if tag else extra)

@@ -94,7 +94,7 @@ class Adjust(IntEnum):
 
 @dataclass(slots=True)
 class SecurityBar:
-    """K线记录（价格单位：元）"""
+    """K线记录（价格单位：元）。跨市场统一模型（A股/港股/美股/期货共用）。"""
     market: int
     code: str
     open: float
@@ -108,6 +108,7 @@ class SecurityBar:
     day: int
     hour: int = 0
     minute: int = 0
+    symbol: str = ""        # 规范化标的串（sz000001 / hk00700），由 API 层填充
 
     @property
     def datetime(self) -> datetime:
@@ -121,8 +122,25 @@ class IndexBar(SecurityBar):
 
 
 @dataclass(slots=True)
+class IndicatorSet:
+    """K线 + 技术指标组合（``TdxData.get_indicators`` 的返回单元）。
+
+    ``indicators`` 里每个序列与 ``bars`` 等长、尾部对齐；预热期为 ``None`` 的指标
+    （如 BOLL 前三档）保留 ``None``。
+    """
+    symbol: str
+    bars: list[SecurityBar] = field(default_factory=list)
+    indicators: dict[str, list[float | None]] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class SecurityQuote:
-    """实时五档报价"""
+    """报价（跨市场统一模型）。
+
+    A股（标准通道）：五档 ``bid``/``ask`` + 买卖量 + 涨跌停价齐全，``name`` 为空。
+    A股（``fields=[...]`` 走 MAC 0x122B）：``name`` 与 ``fields`` 齐全，五档为空。
+    扩展市场（港股/美股/期货）：``name`` + 基础价量在属性上，其余字段位在 ``fields``。
+    """
     market: int
     code: str
     price: float
@@ -144,39 +162,51 @@ class SecurityQuote:
     limit_down: float = 0.0     # 跌停价
     decimal_point: int = 2      # 价格小数位
     open_amount: float = 0.0    # 开盘金额(个股)
+    symbol: str = ""            # 规范化标的串
+    name: str = ""              # 名称（仅 MAC/EX 通道有）
+    fields: dict[str, float] = field(default_factory=dict)  # 原始字段位（"0x7" 等）
 
 
 @dataclass(slots=True)
 class SecurityInfo:
-    """证券列表条目"""
+    """标的清单条目（跨市场统一模型：A股证券列表 + 扩展市场商品列表）"""
     market: int
     code: str
     name: str
     volunit: int
     decimal_point: int
     pre_close: float
+    symbol: str = ""            # 规范化标的串
+    kind: str = ""              # 分类描述（扩展市场的 category/desc）
 
 
 @dataclass(slots=True)
 class TransactionRecord:
-    """逐笔成交（MAC通道含 trade_count=成交笔数）"""
+    """逐笔成交（跨市场统一模型；A股 MAC 通道含 trade_count=成交笔数）"""
     market: int
     code: str
-    time: str           # HH:MM:SS
+    time: str           # HH:MM:SS（扩展市场为 HH:MM）
     price: float
     vol: float          # 手（MAC逐笔）
     trade_count: int    # 成交笔数（MAC=逐笔记录字段；标准当日逐笔协议也有但需单独解析）
     bs_flag: int        # 1=主动买 0=主动卖
+    symbol: str = ""
+    fields: dict[str, float] = field(default_factory=dict)  # 扩展市场额外字段（增仓等）
 
 
 @dataclass(slots=True)
 class MinuteBar:
-    """分时数据"""
+    """分时（跨市场统一模型；A股 MAC 0x122D / 扩展市场 0x122D 同构）"""
     price: float
     vol: float
     avg_price: float = 0.0   # 均价(协议第2字段)
     hour: int = 0
     minute: int = 0
+    symbol: str = ""
+    market: int = 0
+    code: str = ""
+    date: int = 0            # YYYYMMDD
+    fields: dict[str, float] = field(default_factory=dict)  # 扩展市场额外字段（动量等）
 
 
 @dataclass(slots=True)
@@ -201,6 +231,7 @@ class XdxrRecord:
     qian_zongguben: float = 0.0
     panhou_liutong: float = 0.0
     hou_zongguben: float = 0.0
+    symbol: str = ""
 
     @property
     def date(self) -> str:
@@ -248,6 +279,7 @@ class FinanceRecord:
     weifen_lirun: float = 0.0
     meigujing_zichan: float = 0.0
     reserve2: float = 0.0
+    symbol: str = ""
 
 
 # ===== MAC 扩展命令模型 =====
@@ -268,15 +300,21 @@ class BoardInfo:
     symbol_price: float = 0.0
     symbol_rise_speed: float = 0.0
     symbol_pre_close: float = 0.0
+    symbol: str = ""            # 规范化标的串（板块码，如 sh881001）
 
 
 @dataclass(slots=True)
 class MemberQuote:
-    """板块成分股报价（MAC自定义字段）"""
+    """板块成分/自定义字段报价的**协议层原始记录**。
+
+    API 层会把它归一成 :class:`SecurityQuote`（``fields`` 原样保留、基础字段位
+    填进属性），所以普通调用不会看到本类。
+    """
     market: int
     code: str
     name: str
     fields: dict[str, float] = field(default_factory=dict)
+    symbol: str = ""
 
 
 @dataclass(slots=True)
@@ -287,6 +325,7 @@ class BelongBoard:
     board_name: str
     close: float
     pre_close: float
+    symbol: str = ""            # 被查询的个股（非板块）
 
 
 @dataclass(slots=True)
@@ -296,6 +335,7 @@ class AuctionItem:
     price: float
     matched: int
     unmatched: int
+    symbol: str = ""
 
 
 @dataclass(slots=True)
@@ -308,6 +348,7 @@ class UnusualItem:
     desc: str
     value: float
     time: str
+    symbol: str = ""
 
 
 @dataclass(slots=True)
@@ -328,6 +369,7 @@ class SymbolSnapshot:
     amount: float
     turnover: float
     avg_price: float
+    symbol: str = ""
 
 
 @dataclass(slots=True)
@@ -361,6 +403,7 @@ class CapitalFlow:
     sell5: float
     big5: float
     mid5: float
+    symbol: str = ""
 
 
 # ===== 服务器文件解析模型（板块/行业/历史专业财报） =====

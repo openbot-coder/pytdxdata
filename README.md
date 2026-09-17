@@ -29,19 +29,19 @@ pip install "pytdxdata[uvloop]"
 ```python
 import asyncio
 from pytdxdata import TdxData
-from pytdxdata.models import Market, KlinePeriod, Adjust
+from pytdxdata.models import KlinePeriod, Adjust
 
 async def main():
     async with TdxData() as td:                     # 自动建连接池 + 缓存
         # 日K线（count 超过单页大小会自动多连接并发分页）
-        bars = await td.get_kline(Market.SH, "600000", KlinePeriod.DAY, count=240)
+        bars = await td.get_bars(["sz000001"], KlinePeriod.DAY, count=240)
         # 前复权（自动走 MAC 通道）
-        qfq = await td.get_kline(Market.SZ, "300308", KlinePeriod.DAY,
+        qfq = await td.get_bars(["sz300308"], KlinePeriod.DAY,
                                  count=500, adjust=Adjust.QFQ)
-        # 五档报价（传 (market, code) 元组列表，>80 只自动切批）
-        quotes = await td.get_quotes([(Market.SH, "600000"), (Market.SZ, "000001")])
+        # 跨市场报价：A股+港股+美股一次拿全
+        quotes = await td.get_quotes(["sh600000", "hk00700", "usAAPL"])
         # 逐笔成交（MAC 通道，支持历史日期）
-        ticks = await td.get_transactions(Market.SZ, "000001", date=20260811)
+        ticks = await td.get_ticks(["sz000001"], date=20260811)
         print(bars[-1].close, quotes[0].price, len(ticks))
 
 asyncio.run(main())
@@ -78,7 +78,8 @@ df = pd.DataFrame([asdict(b) for b in bars])
 | 搞清枚举该填几 | [枚举速查](https://openbot-coder.github.io/pytdxdata/api/enums/) |
 | 看协议二进制格式、三池路由、缓存策略 | [深入原理](https://openbot-coder.github.io/pytdxdata/internals/architecture/) |
 | 用命令行 | [命令行工具](https://openbot-coder.github.io/pytdxdata/cli/) |
-| 完整接口清单（51 个数据方法） | [`docs/API_REFERENCE.md`](https://openbot-coder.github.io/pytdxdata/API_REFERENCE/) |
+| 完整接口清单（28 个统一方法 + 33 个废弃别名） | [`docs/API_REFERENCE.md`](https://openbot-coder.github.io/pytdxdata/API_REFERENCE/) |
+| 重构审查（数据一致性 / 遗漏对账） | [接口重构审查](https://openbot-coder.github.io/pytdxdata/refactor-audit/) |
 | 版本变更 | [`CHANGELOG.md`](https://github.com/openbot-coder/pytdxdata/blob/main/CHANGELOG.md) |
 
 > 本 README 只做**入口层**。深度内容一律在文档站，避免两处维护造成漂移。
@@ -86,7 +87,7 @@ df = pd.DataFrame([asdict(b) for b in bars])
 ## 给 AI 助手用
 
 仓库根的 [`SKILL.md`](https://github.com/openbot-coder/pytdxdata/blob/main/SKILL.md) 是一份可直接加载的技能：三条必守约定、`KlinePeriod` 等枚举取值表、
-「想做什么 → 用哪个方法」决策表、以及 9 条真实陷阱。AI 编程助手读完就能一次写对，不必翻源码。
+「想做什么 → 用哪个方法」决策表、以及 11 条真实陷阱。AI 编程助手读完就能一次写对，不必翻源码。
 
 ```bash
 # 丢进你所用 AI 助手的 skills 目录即可
@@ -103,7 +104,7 @@ curl -o ~/.workbuddy/skills/pytdxdata/SKILL.md --create-dirs \
 
 ```bash
 uv sync                        # 建虚拟环境 + 注册 tdx 命令
-uv run pytest tests/           # 109 个测试用例（协议 / 池 / 缓存 / 分页 / API / 文件解析 / CLI / 文档漂移）
+uv run pytest tests/           # 127 个测试用例（协议 / 池 / 缓存 / 分页 / 全接口回归 / 文件解析 / CLI / 文档漂移）
 uv sync --group docs           # 文档站依赖（mkdocs-material + mkdocstrings）
 uv run mkdocs serve            # 本地预览文档站
 ```

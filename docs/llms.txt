@@ -14,11 +14,11 @@ pip install pytdxdata     # 或 uv add pytdxdata；要求 Python >= 3.11
 ```python
 import asyncio
 from pytdxdata import TdxData
-from pytdxdata.models import KlinePeriod, Market
+from pytdxdata.models import KlinePeriod
 
 async def main():
     async with TdxData() as td:            # 自动探测服务器、建连接池、初始化缓存
-        bars = await td.get_kline(Market.SH, "600000", KlinePeriod.DAY, count=2400)
+        bars = await td.get_bars("sh600000", KlinePeriod.DAY, count=2400)
         print(bars[-1].datetime, bars[-1].close)
 
 asyncio.run(main())
@@ -26,10 +26,11 @@ asyncio.run(main())
 
 ## 心智模型（AI 必读）
 
-1. **入口只有一个类**：`TdxData`。所有数据获取都是它的公开异步方法（51 个数据方法，
-   另有 `start()` / `close()` 生命周期方法），必须在 `async with` 内使用。
-2. **标的需要「市场 + 代码」两个参数**。同一个 6 位代码在不同市场含义不同：
-   `(SH, "000001")` 是上证指数，`(SZ, "000001")` 是平安银行。
+1. **入口只有一个类**：`TdxData`。所有数据获取都是它的公开异步方法（v0.6 起为 **28 个统一方法**，
+   另有 33 个 deprecated 别名与 `start()` / `close()` 生命周期方法），必须在 `async with` 内使用。
+2. **标的用字符串**，形如 `sz000001` / `sh600000` / `hk00700` / `usAAPL` / `cffex:IFL0`。
+   同一个 6 位代码在不同市场含义不同：`sh000001` 是上证指数，`sz000001` 是平安银行；
+   裸 6 位数字（如 `000001`）视为沪市指数。统一接口不再接受 `(market, code)` 元组。
 3. **枚举取值没有直觉，必须用枚举成员，不要写数字字面量**：
    - `Market`: SZ=0 / SH=1 / BJ=2
    - `KlinePeriod`: MIN_5=0, MIN_15=1, MIN_30=2, MIN_60=3, **DAY=4**, WEEK=5, MONTH=6, **MIN_1=7**, MIN_3=8, YEAR=9, SEASON=10, YEAR_ALT=11
@@ -39,19 +40,24 @@ asyncio.run(main())
 5. **实例要复用**：连接池与缓存都挂在 `TdxData` 实例上。长驻进程（Web 服务）应只创建一个实例，
    不要每请求新建，否则等于每请求重建连接池且缓存全部失效。
 
-## 主要能力分组
+## 主要能力分组（统一接口）
 
-- **K 线**：`get_kline`（主接口，自动并发分页、支持复权与日期区间）、`get_kline_batch`（多股票并发）、
-  `get_kline_since`（增量）、`get_index_kline`、`get_stock_kline_with_indicators`
-- **报价**：`get_quotes`（五档，>80 只自动切批）、`get_stock_quotes_list`、`get_market_stat`
-- **逐笔 / 分时**：`get_transactions`（含 `trade_count` 成交笔数，支持历史日期）、`get_minute`、`get_minute_batch`
-- **证券列表**：`get_security_count`、`get_security_list`、`get_security_list_all`
+标的一律用字符串；以下均为 v0.6 统一接口，跨市场自动选路。
+
+- **标的清单**：`get_universe`（A股 + 港股 + 美股 + 期货/期权）
+- **K 线**：`get_bars`（自动并发分页、支持复权与日期区间、多标的并发）
+- **技术指标**：`get_indicators`（K线 + MACD/KDJ/RSI/BOLL/MA/EMA）
+- **报价**：`get_quotes`（五档，>80 只自动切批）、`get_snapshot`（个股特征）、`get_market_stat`
+- **逐笔 / 分时**：`get_ticks`（含 `trade_count`，支持历史日期）、`get_minutes`（`sampling=True` 取缩略采样）
 - **财务 / 除权**：`get_finance`（最新快照）、`get_xdxr`、`get_price_limits`（本地计算涨跌停）
-- **板块**：`get_board_list`、`get_board_members`、`get_board_ranking`、`get_board_change_ranking`、`get_belong_board`
-- **服务器文件（下载 + 解析一步到位）**：`get_block_parsed`（板块成分）、`get_industry_map`（通达信+申万行业）、
-  `get_financial_file_infos`、`get_financial_records_parsed`（历史专业财报）
-- **扩展市场**：`get_goods_list`、`get_goods_quotes`、`get_goods_transaction_all` 等，配合 `ExMarket` 使用
-- **批量**：`get_kline_batch` / `get_minute_batch`，多股票并发且连接池会分配到不同服务器
+- **F10**：`get_f10`（公司资料目录 + 正文）
+- **板块**：`get_boards`、`get_board_members`、`get_board_of`、`get_board_summary`、
+  `get_board_ranking`、`get_board_change_ranking`
+- **服务器文件（下载 + 解析一步到位）**：`get_file`（原始字节）、`get_block_parsed`（板块成分）、
+  `get_industry_map`（通达信+申万行业）、`get_financial_file_infos`、`get_financial_records_parsed`（历史专业财报）
+
+> 旧的分通道/市场方法（`get_kline` / `get_transactions` / `get_goods_*` 等共 33 个）保留为
+> deprecated 别名，1.0 移除；完整对照见[接口重构审查](https://openbot-coder.github.io/pytdxdata/refactor-audit/)与 CHANGELOG。
 
 ## CLI
 
@@ -102,6 +108,7 @@ tdx financial gpcw20260331.zip --limit 5
 
 - [SKILL.md](https://raw.githubusercontent.com/openbot-coder/pytdxdata/main/SKILL.md)：面向 AI **编程**助手的技能文件（必守约定 / 枚举取值表 / 决策表 / 陷阱清单），比本文件更适合指导写代码
 - [完整接口清单](https://openbot-coder.github.io/pytdxdata/API_REFERENCE/)：手工维护的全量清单，含参数默认值
+- [接口重构审查](https://openbot-coder.github.io/pytdxdata/refactor-audit/)：统一接口 / 废弃别名全清单 + 数据一致性与遗漏对账
 - [更新日志](https://github.com/openbot-coder/pytdxdata/blob/main/CHANGELOG.md)
 - [GitHub 仓库](https://github.com/openbot-coder/pytdxdata)
 - [PyPI](https://pypi.org/project/pytdxdata/)

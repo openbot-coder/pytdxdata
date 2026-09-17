@@ -36,6 +36,15 @@ class PageResult:
     items: list[Any]
 
 
+class _Slot:
+    """worker 当前持有的连接槽：失败换连时原地更新，保证最终能精确归还。"""
+
+    __slots__ = ("pc",)
+
+    def __init__(self, pc: PooledConnection) -> None:
+        self.pc: PooledConnection | None = pc
+
+
 class Paginator:
     """用至多 concurrency 个连接并行拉取分页数据。"""
 
@@ -64,22 +73,27 @@ class Paginator:
         conns = await self.pool.acquire_many(eff_conc)
         if not conns:
             raise PoolTimeoutError("连接池获取超时（无可用连接）")
+        # 每个 worker 一个连接槽：中途换连会更新槽内引用，
+        # 归还时按槽归还（否则换掉的新连接会漏还，把池耗干）
+        slots = [_Slot(pc) for pc in conns]
         try:
             stop = asyncio.Event()
             out: list[PageResult] = []
             out_lock = asyncio.Lock()
-            k = len(conns)
+            k = len(slots)
             workers = [
                 asyncio.create_task(
-                    self._worker(wid, conns[wid % k], jobs[wid::k], cmd_factory,
+                    self._worker(slots[wid], jobs[wid::k], cmd_factory,
                                  stop, out, out_lock, spec)
                 )
                 for wid in range(k)
             ]
             await asyncio.gather(*workers)
         finally:
-            for pc in conns:
-                await self.pool.release(pc)
+            for s in slots:
+                if s.pc is not None:
+                    pc, s.pc = s.pc, None
+                    await self.pool.release(pc)
         return self._assemble(out, spec.ordered)
 
     def _plan_starts(self, spec: PageSpec) -> list[tuple[int, int]]:
@@ -102,49 +116,47 @@ class Paginator:
         return jobs
 
     async def _worker(
-        self, wid: int, conn: PooledConnection, jobs: list[tuple[int, int]],
+        self, slot: _Slot, jobs: list[tuple[int, int]],
         cmd_factory: Callable[[int, int], Any], stop: asyncio.Event,
         out: list[PageResult], out_lock: asyncio.Lock, spec: PageSpec,
     ) -> None:
-        current = conn
         for start, count in jobs:
-            if stop.is_set():
+            if stop.is_set() or slot.pc is None:
                 return
-            items, current = await self._fetch_one(
-                current, cmd_factory(start, count), count)
-            if items is None:
-                continue  # 该页失败（strict=False 时留空）
+            items, ok = await self._fetch_one(slot, cmd_factory(start, count), count)
+            if not ok:
+                return   # 换连接失败 → 本 worker 退出（该页留空）
             async with out_lock:
                 out.append(PageResult(start=start, count=count, items=items))
             if spec.stop_when_short and len(items) < count:
                 stop.set()
                 return
 
-    async def _fetch_one(self, conn: PooledConnection, cmd, page_size: int):
+    async def _fetch_one(self, slot: _Slot, cmd, page_size: int):
         """单页拉取，失败换连接重试。
 
-        返回 (items, current_conn) — current_conn 始终指向当前可用连接，
-        worker 据此更新自己的连接引用，避免跨页使用已关闭连接。
+        返回 ``(items, ok)``。失败时连接一律 ``broken=True`` 归还并把槽清空，
+        调用方据此退出，不会留下悬空引用。
         """
-        current = conn
         for attempt in range(self.retries + 1):
             try:
-                result = await current.execute(cmd)
-                return (list(result) if result is not None else []), current
+                result = await slot.pc.execute(cmd)   # type: ignore[union-attr]
+                return (list(result) if result is not None else []), True
             except Exception as e:
+                if slot.pc is not None:
+                    await self.pool.release(slot.pc, broken=True)
+                    slot.pc = None
                 if attempt >= self.retries:
                     if self.strict:
                         raise
                     log.warning("分页拉取失败(strict=False留空): %s", e)
-                    return None, current
-                # 换连接重试
-                await self.pool.release(current, broken=True)
+                    return None, False
                 try:
-                    current = await self.pool.acquire(timeout=3.0)
+                    slot.pc = await self.pool.acquire(timeout=3.0)
                 except PoolTimeoutError:
                     log.warning("分页重试获取连接失败，跳过该页: %s", e)
-                    return None, current
-        return None, current
+                    return None, False
+        return None, False
 
     def _assemble(self, results: list[PageResult], ordered: bool) -> list[Any]:
         if ordered:

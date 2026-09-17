@@ -211,6 +211,10 @@ class DynamicPool:
                 # 2. 可扩容（未达上限且有可用服务器）→ 新建连接
                 if self._total < self.max_size:
                     host = self._next_available_server()
+                    if host is None:
+                        # 兜底：全部服务器都在冷却中，而池子未满 —— 此时等 release
+                        # 永远等不到（没人持有），只能挑最健康的一台顶着冷却重试
+                        host = self._next_available_server(ignore_cooldown=True)
                     if host:
                         try:
                             pc = await self._new_conn(host)
@@ -244,18 +248,19 @@ class DynamicPool:
                 break
         return out
 
-    def _next_available_server(self) -> str | None:
+    def _next_available_server(self, *, ignore_cooldown: bool = False) -> str | None:
         ranked = self.health.rank(self.servers)
         # 1. 优先选未冷却且未达并发上限的服务器
         for h in ranked:
-            if self.health.in_cooldown(h):
+            if self.health.in_cooldown(h) and not ignore_cooldown:
                 continue
             if self._server_count.get(h, 0) < self.per_server_cap:
                 return h
         # 2. 兜底：仅从「未冷却」的已占用服务器里随机复用（避免反复打坏服务器）
         alive = [
             h for h in ranked
-            if not self.health.in_cooldown(h) and self._server_count.get(h, 0) > 0
+            if (ignore_cooldown or not self.health.in_cooldown(h))
+            and self._server_count.get(h, 0) > 0
         ]
         return random.choice(alive) if alive else None
 

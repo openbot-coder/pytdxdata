@@ -20,7 +20,7 @@
 | 港股 / 美股 / 期货 / 期权 | **EX**（7727） | 完全不同的协议栈 |
 
 !!! note "只请求，不改语义"
-    路由是**内部实现细节**。同一个 `get_kline()` 调用，传不传 `adjust` 会走不同通道，
+    路由是**内部实现细节**。同一个 `get_bars()` 调用，传不传 `adjust` 会走不同通道，
     但返回类型和字段完全一致——你不需要写 `if adjust:` 分支。
 
 ## 三组服务器 {#server-groups}
@@ -66,13 +66,11 @@ python -m pytdxdata.server_probe
 - 美股期权 / 港股期权**协议内无数据**
 
 ```python
-from pytdxdata.models import ExMarket, KlinePeriod
-
-await td.get_kline(ExMarket.HK_MAIN_BOARD, "00700", KlinePeriod.DAY, count=700)
-await td.get_kline(ExMarket.US_STOCK, "AAPL", KlinePeriod.DAY, count=700)
+await td.get_bars("hk00700", KlinePeriod.DAY, count=700)
+await td.get_bars("usAAPL", KlinePeriod.DAY, count=700)
 ```
 
-`ExMarket` 的完整成员见 [枚举速查](../api/enums.md#exmarket)。
+扩展市场用字符串前缀（`hk` / `us` / `cffex` …）指定；`ExMarket` 的完整成员见 [枚举速查](../api/enums.md#exmarket)。
 
 ## 下一步
 

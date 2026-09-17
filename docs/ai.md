@@ -6,7 +6,7 @@ pytdxdata 的枚举取值**完全没有直觉**（`KlinePeriod.DAY` 是 `4` 不�
 | 文件 | 面向 | 内容 |
 |---|---|---|
 | [`llms.txt`](https://openbot-coder.github.io/pytdxdata/llms.txt) | AI 爬虫 / 问答型模型 | 心智模型、能力分组、关键陷阱，自动随站点发布 |
-| [`SKILL.md`](https://github.com/openbot-coder/pytdxdata/blob/main/SKILL.md) | AI **编程**助手 | 必守约定、枚举取值表、可运行模板、任务→方法决策表、9 条陷阱 |
+| [`SKILL.md`](https://github.com/openbot-coder/pytdxdata/blob/main/SKILL.md) | AI **编程**助手 | 必守约定、枚举取值表、可运行模板、任务→方法决策表、11 条陷阱 |
 
 `llms.txt` 解决「这个库能干什么」，`SKILL.md` 解决「代码该怎么写对」。
 
@@ -25,12 +25,12 @@ curl -o ~/.workbuddy/skills/pytdxdata/SKILL.md \
 
 ## 里面有什么
 
-- **三条必守约定** —— 唯一入口是 `TdxData` 且必须 `async with`；`market` 是整数枚举而不是字符串；
-  返回值是 `list[dataclass]` 而不是 DataFrame
+- **三条必守约定** —— 唯一入口是 `TdxData` 且必须 `async with`；标的是字符串（如 `sh600000`）
+  而不是 `(market, code)` 元组；返回值是 `list[dataclass]` 而不是 DataFrame
 - **枚举取值表** —— `Market` / `KlinePeriod` / `Adjust` / `ExMarket` 的准确取值
 - **可运行模板** —— K 线、复权、报价、逐笔、分时、批量，全部是能直接跑的代码
-- **「想做什么 → 用哪个方法」决策表** —— 21 个常见需求的直接映射
-- **9 条真实陷阱** —— 每条都注明后果和正确做法（如 `SH 000001` 是上证指数、`SZ 000001` 才是平安银行）
+- **「想做什么 → 用哪个方法」决策表** —— 18 个常见需求的直接映射
+- **11 条真实陷阱** —— 每条都注明后果和正确做法（如 `sh000001` 是上证指数、`sz000001` 才是平安银行）
 
 ## 为什么值得让 AI 读
 
@@ -38,10 +38,11 @@ curl -o ~/.workbuddy/skills/pytdxdata/SKILL.md \
 这些都不是「读一眼签名就能猜到」的信息。不加载技能，AI 通常会写出：
 
 ```python
-# ❌ 三种典型错误
-await td.get_kline("sh", "600000", 0, count=240)   # market 传字符串；0 是 5 分钟线不是日线
-td.get_kline(1, "600000", KlinePeriod.DAY)         # 忘了 await，且没在 async with 内
-df = bars.to_dataframe()                           # 返回值是 list[dataclass]，没有这个方法
+# ❌ 几种典型错误
+await td.get_bars("sh600000", 4, count=240)      # 4 是数字字面量；应用 KlinePeriod.DAY
+await td.get_bars((Market.SH, "600000"))         # 统一接口只接受字符串标的，不接受元组
+td.get_bars("sh600000")                          # 忘了 await，且没在 async with 内
+df = bars.to_dataframe()                         # 返回值是 list[dataclass]，没有这个方法
 ```
 
 装载技能后这类错误基本消失。

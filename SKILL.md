@@ -18,20 +18,24 @@ description: 用 pytdxdata 拉取通达信行情数据——A股(沪/深/北)、
 from pytdxdata import TdxData
 
 async with TdxData() as td:      # 自动 start（探测服务器 + 预建连接 + 建缓存）
-    bars = await td.get_kline(...)
+    bars = await td.get_bars(["sz000001"], KlinePeriod.DAY, count=240)
 # 退出即 close
 ```
 
-不要直接 `await TdxData().get_kline(...)`——没 `start()` 就没有连接池。
+不要直接 `await TdxData().get_bars(...)`——没 `start()` 就没有连接池。
 
-**2. `market` 传的是整数枚举值，不是字符串**
+**2. 标的写法是字符串，不是元组**
 
-这是最高频的错误来源。**不要传 `"sh"` / `"SH"` / `"1"`**，要用枚举（它就是 `IntEnum`，所以传 `1` 也能跑，但可读性差）：
+这是 v0.6 的最重要变化。**不要传 `(Market.SH, "600000")` 元组**，用字符串：
 
 ```python
-from pytdxdata.models import Market, KlinePeriod, Adjust
+# 旧写法（deprecated，会发出 DeprecationWarning）：
+bars = await td.get_kline(Market.SH, "600000", KlinePeriod.DAY, count=240)
 
-await td.get_kline(Market.SH, "600000", KlinePeriod.DAY, count=240)
+# 新写法（推荐）：
+bars = await td.get_bars(["sz000001"], KlinePeriod.DAY, count=240)
+# 港股/美股/期货也一样：
+bars = await td.get_bars(["hk00700", "usAAPL", "cffex:IFL0"], KlinePeriod.DAY, count=240)
 ```
 
 **3. 返回 `list[dataclass]`，不是 DataFrame**
@@ -55,34 +59,34 @@ pip install pytdxdata        # 或 uv add pytdxdata
 ```python
 import asyncio
 from pytdxdata import TdxData
-from pytdxdata.models import Market, KlinePeriod, Adjust
+from pytdxdata.models import KlinePeriod, Adjust
 
 async def main():
     async with TdxData() as td:
         # 日K线，240 根（count 超过单页大小会自动多连接并发分页）
-        bars = await td.get_kline(Market.SH, "600000", KlinePeriod.DAY, count=240)
+        bars = await td.get_bars(["sz000001"], KlinePeriod.DAY, count=240)
         print(bars[-1].close, bars[-1].datetime)
 
         # 前复权日线（复权自动走 MAC 通道）
-        qfq = await td.get_kline(Market.SZ, "300308", KlinePeriod.DAY,
+        qfq = await td.get_bars(["sz300308"], KlinePeriod.DAY,
                                  count=500, adjust=Adjust.QFQ)
 
-        # 五档报价：入参是 (market, code) 元组列表，一次可传多只（>80 只自动切批）
-        quotes = await td.get_quotes([(Market.SH, "600000"), (Market.SZ, "000001")])
-        print(quotes[0].price, quotes[0].bid[0], quotes[0].ask[0])
+        # 跨市场报价：A股+港股+美股一次拿全
+        quotes = await td.get_quotes(["sz000001", "hk00700", "usAAPL"])
+        print(quotes[0].price, quotes[1].name, quotes[2].amount)
 
         # 逐笔成交（MAC 通道，支持历史日期，含 trade_count 成交笔数）
-        ticks = await td.get_transactions(Market.SZ, "000001", date=20260811)
-        print(sum(r.trade_count for r in ticks))     # 当日总成交笔数
+        ticks = await td.get_ticks(["sz000001"], date=20260811)
+        print(sum(r.trade_count for r in ticks))
 
         # 分时（MAC 通道，今日或历史）
-        minute = await td.get_minute(Market.SH, "600000")
+        minutes = await td.get_minutes(["sz000001"])
 
         # 批量 K 线：多股票自动并发，池子会分配到不同服务器
-        batch = await td.get_kline_batch(
-            [(Market.SH, "600000"), (Market.SZ, "000001")],
+        batch = await td.get_bars(
+            ["sz000001", "sh600000"],
             KlinePeriod.DAY, count=240,
-        )                                            # -> {"600000": [...], "000001": [...]}
+        )  # 平铺返回，每条带 .symbol 字段
 
 asyncio.run(main())
 ```
@@ -121,38 +125,37 @@ asyncio.run(main())
 
 **`ExMarket`** — 扩展市场（港股 / 美股 / 期货 / 期权，共 46 个成员，走独立 EX 通道）
 
-常用几个：`HK_MAIN_BOARD=31`、`US_STOCK=74`、`CFFEX_FUTURES=47`、`SH_STOCK_OPTION=8`、`SZ_STOCK_OPTION=9`。
-完整表见 <https://openbot-coder.github.io/pytdxdata/api/enums/>。
+v0.6 起统一接口用**字符串前缀**指定扩展市场，一般不再需要 `ExMarket`：
 
 ```python
-from pytdxdata.models import ExMarket
-
-await td.get_kline(ExMarket.HK_MAIN_BOARD, "00700", KlinePeriod.DAY, count=700)   # 港股，5 位代码
-await td.get_kline(ExMarket.US_STOCK, "AAPL", KlinePeriod.DAY, count=700)         # 美股，ticker
-await td.get_kline(ExMarket.CFFEX_FUTURES, "IFL0", KlinePeriod.DAY, count=700)    # 期货合约
+await td.get_bars("hk00700", KlinePeriod.DAY, count=700)      # 港股（5 位代码）
+await td.get_bars("usAAPL", KlinePeriod.DAY, count=700)       # 美股（ticker）
+await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 ```
+
+常用前缀：`hk` / `us` / `cffex` / `shf` / `dl` / `zz` / `gz`；完整表见 <https://openbot-coder.github.io/pytdxdata/api/enums/>。
 
 ## 想做什么 → 用哪个方法
 
 | 需求 | 方法 |
 |---|---|
-| 日/周/月/分钟 K 线 | `get_kline(market, code, period, *, count, adjust)` |
-| 增量更新（从某天往后） | `get_kline_since(market, code, period, since, adjust)` |
-| 一次拉多只股票 K 线 | `get_kline_batch(stocks, period, *, count, adjust, concurrency)` |
-| 指数 K 线 | `get_index_kline(market, code, period, *, count)` |
-| K 线 + MACD/KDJ/RSI/BOLL | `get_stock_kline_with_indicators(market, code, indicators, ...)` |
-| 实时五档报价 | `get_quotes(stocks)` |
-| 逐笔成交 | `get_transactions(market, code, *, date)` |
-| 分时图 | `get_minute(market, code, *, date)` |
-| 全市场股票列表 | `get_security_list_all(market)`（缓存 1 天） |
-| 除权除息 / 财务快照 | `get_xdxr(...)` / `get_finance(...)` |
-| 板块列表 / 成分股 / 涨跌排行 | `get_board_list` / `get_board_members` / `get_board_ranking` |
-| 个股所属板块 | `get_belong_board(market, code)` |
+| 全市场标的清单（A股+港股+期货…） | `get_universe(market=None)` |
+| 日/周/月/分钟 K 线（任意市场） | `get_bars(symbols, period, *, count, adjust, start_date, end_date)` |
+| K 线 + MACD/KDJ/RSI/BOLL | `get_indicators(symbols, indicators, ...)` |
+| 实时五档报价（A股）/ 基础报价（港股/美股/期货） | `get_quotes(symbols, *, fields=None)` |
+| 逐笔成交（任意市场） | `get_ticks(symbols, *, date)` |
+| 分时图 / 缩略采样 | `get_minutes(symbols, *, date, sampling=True)` |
+| 全市场股票列表（缓存 1 天） | `get_universe("sz")` / `get_universe("sh")` |
+| 除权除息 / 财务快照 | `get_xdxr(symbols)` / `get_finance(symbols)` |
+| F10 公司资料 | `get_f10(symbol, section)` |
+| 板块列表 / 成分股 / 涨跌排行 | `get_boards` / `get_board_members` / `get_board_ranking` |
+| 个股所属板块 | `get_board_of(symbols)` |
 | 集合竞价 / 异动 / 资金流 | `get_auction` / `get_unusual` / `get_capital_flow` |
+| 个股特征快照 | `get_snapshot(symbols)` |
 | **板块成分文件**（离线快照） | `get_block_parsed("block_gn.dat")` |
 | **行业分类**（通达信 + 申万） | `get_industry_map()` |
 | **历史专业财报**（gpcw 全字段） | `get_financial_file_infos()` + `get_financial_records_parsed(fn)` |
-| 涨跌停价 | `get_price_limits(market, code, name, pre_close, listed_days)`（本地算，无网络） |
+| 涨跌停价 | `get_price_limits(symbol, name, pre_close, listed_days)`（本地算，无网络） |
 | 全市场涨跌家数/成交额 | `get_market_stat()` |
 
 ## 通道与数据特性（影响你能拿到什么）
@@ -160,9 +163,9 @@ await td.get_kline(ExMarket.CFFEX_FUTURES, "IFL0", KlinePeriod.DAY, count=700)  
 库内部有**标准通道**和 **MAC 通道**两条链路，会**按命令自动选路**，你不用管。但有几件事必须知道：
 
 - **数据有 15 分钟延时**（通达信公开服务器特性）。要实时数据请用券商行情。
-- **复权 K 线与 1 分钟 K 线走 MAC 通道**。`get_kline(..., adjust=Adjust.QFQ)` 自动切换。
+- **复权 K 线与 1 分钟 K 线走 MAC 通道**。`get_bars(..., adjust=Adjust.QFQ)` 自动切换。
 - **`count` 很大时会自动多连接并发分页**，无需手动翻页。但标准通道 K 线 `count < 100` 部分服务器会返回空——内部已强制 `min_page=100` 规避。
-- **`get_quotes` 一次 >80 只自动切批**；而 MAC 的 `get_stock_quotes` 上限就是 80 只/次。
+- **`get_quotes` 一次 >80 只自动切批**；走 MAC 字段位通道（`fields=`）时上限为 80 只/次。
 - **历史逐笔没有笔数字段**，只有当日逐笔的 `trade_count` 有效。
 - 板块文件（`block_*.dat`）/ 行业（`tdxhy.cfg`）/ 财报（`gpcw*.zip`）是**服务器上的静态文件**，解析后是普通 dataclass，**落 JSON 后完全脱网可用**——适合做离线快照。
 
@@ -170,14 +173,16 @@ await td.get_kline(ExMarket.CFFEX_FUTURES, "IFL0", KlinePeriod.DAY, count=700)  
 
 | 坑 | 后果 | 正确做法 |
 |---|---|---|
-| `market` 传 `"sh"` 字符串 | 直接报错或路由到错误市场 | 用 `Market.SH` 枚举 |
-| 以为 `KlinePeriod.DAY == 0` | 拿到的是 5 分钟线 | `DAY=4`，对照上面的表 |
+| 统一方法（`get_quotes`/`get_bars`…）传 `(Market.SH, "600000")` 元组或市场号 | v0.6 起直接报错 | 用字符串 `"sh600000"` |
+| 旧别名（`get_kline`/`get_transactions`…）传 `(market, code)` | 能跑，但发出 `DeprecationWarning` | 迁移到统一方法 + 字符串 |
 | 忘了 `async with` / `start()` | 无连接池，运行时报错 | 一律 `async with TdxData() as td:` |
+| `KlinePeriod.DAY == 0` | 拿到的是 5 分钟线 | `DAY=4`，对照枚举表 |
 | 等在返回值上找 `.to_dataframe()` | 不存在 | `pd.DataFrame([asdict(x) for x in bars])` |
 | 把 `close` 当成分 | 数值差 100 倍 | 价格单位是**元**（float） |
-| `SH 000001` 当成平安银行 | 拿到的是上证指数 | **代码不唯一**：`(Market.SH, "000001")`=上证指数，`(Market.SZ, "000001")`=平安银行 |
+| `sh000001` 当成平安银行 | 拿到的是上证指数 | **代码不唯一**：`sh000001`=上证指数，`sz000001`=平安银行 |
 | 用 `get_block_info` 又自己拆二进制 | 白写解析器 | 用 `get_block_parsed`，已经解析好了 |
-| 循环里逐个 `await get_kline` | 慢 | 用 `get_kline_batch` 让它并发 |
+| 循环里逐个 `await get_bars` | 慢 | 用列表传多个标的，自动并发 |
+| 港股/美股五档 bid/ask | 没有（协议不支持） | `fields` 字段位通道有 name 但无五档 |
 | 依赖实时性做信号 | 数据是 15 分钟前的 | 换券商实时源 |
 
 ## 深入参考

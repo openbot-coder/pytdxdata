@@ -28,25 +28,25 @@ from pytdxdata.models import BoardInfo, MemberQuote, AuctionItem, CapitalFlow
 
 | 模型 | 代表什么 | 从哪来 |
 |---|---|---|
-| `SecurityBar` | 一根 K 线 | `get_kline` / `get_kline_batch` |
-| `IndexBar` | 指数 K 线（继承 `SecurityBar`） | `get_index_kline` |
-| `SecurityQuote` | 五档报价快照 | `get_quotes` |
-| `SecurityInfo` | 证券列表条目（代码 / 名称 / 前收） | `get_security_list` |
-| `TransactionRecord` | 一笔成交 | `get_transactions` |
-| `MinuteBar` | 一分钟分时点 | `get_minute` |
+| `SecurityBar` | 一根 K 线 | `get_bars` / `get_indicators` |
+| `IndexBar` | 指数 K 线（继承 `SecurityBar`） | `get_bars` |
+| `SecurityQuote` | 五档报价快照 | `get_quotes` / `get_board_members` |
+| `SecurityInfo` | 证券列表条目（代码 / 名称 / 前收） | `get_universe` |
+| `TransactionRecord` | 一笔成交 | `get_ticks` |
+| `MinuteBar` | 一分钟分时点 | `get_minutes` |
 | `XdxrRecord` | 一次除权除息事件 | `get_xdxr` |
 | `FinanceRecord` | 财务**快照**（最新一期，36 字段） | `get_finance` |
 | `FinancialRecord` | 历史专业财报（`gpcw*.zip`，多报告期） | `get_financial_records_parsed` |
 | `FinancialFileInfo` | 财报文件索引条目 | `get_financial_file_infos` |
 | `TdxBlock` | 一个板块及其成分股 | `get_block_parsed` |
 | `IndustryInfo` | 一只股票的行业归属 | `get_industry_map` |
-| `BoardInfo` | 板块列表条目（含领涨股） | `get_board_list` |
-| `MemberQuote` | 成分股报价（自定义字段） | `get_board_members` / `get_stock_quotes` |
-| `BelongBoard` | 个股所属板块 | `get_belong_board` |
+| `BoardInfo` | 板块列表条目（含领涨股） | `get_boards` |
+| `MemberQuote` | 成分股报价（MAC 原始字段） | 旧 `get_stock_quotes` / `get_stock_quotes_list` |
+| `BelongBoard` | 个股所属板块 | `get_board_of` |
 | `AuctionItem` | 集合竞价撮合点 | `get_auction` |
 | `UnusualItem` | 一笔市场异动 | `get_unusual` |
-| `SymbolSnapshot` | 个股特征快照 | `get_symbol_info` |
-| `GoodsItem` | 扩展市场商品 | `get_goods_list` |
+| `SymbolSnapshot` | 个股特征快照 | `get_snapshot` |
+| `GoodsItem` | 扩展市场商品 | 旧 `get_goods_list` |
 | `ServerInfo` | 服务器交易时段 | `get_server_info` |
 | `CapitalFlow` | 个股资金流向 | `get_capital_flow` |
 | `MarketStat` | 全市场统计 | `get_market_stat` |

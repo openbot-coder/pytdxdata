@@ -44,7 +44,7 @@
 # 100 个协程同时请求同一只股票的同一段 K 线
 # → 只发 1 次网络请求
 results = await asyncio.gather(*[
-    td.get_kline(Market.SH, "600000", KlinePeriod.DAY, count=800)
+    td.get_bars("sh600000", KlinePeriod.DAY, count=800)
     for _ in range(100)
 ])
 ```

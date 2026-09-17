@@ -111,26 +111,17 @@ def _pct(price: float, pre: float) -> str:
 # ------------------------------------------------------------------ #
 
 async def cmd_quotes(td: TdxData, symbols: list[str]) -> None:
-    cn, ex = [], []
-    for sym in symbols:
-        s = parse_symbol(sym)
-        if s.kind == "cn":
-            cn.append((Market(s.market), s.code))
-        else:
-            ex.append((s.market, s.code))
-    for q in await td.get_quotes(cn):
-        _print_cn_quote(q)
-    if ex:
-        from .protocol.commands.ex_proto import GetExInstrumentQuoteCmd
-        for market, code in ex:
-            q = await td._execute_ex(GetExInstrumentQuoteCmd(market, code))
-            _print_ex_quote(market, code, q)
+    quotes = await td.get_quotes(symbols)
+    for q in quotes:
+        _print_quote(q)
 
 
-def _print_cn_quote(q) -> None:
+def _print_quote(q) -> None:
     pct = (q.price / q.pre_close - 1) * 100 if q.pre_close else 0
+    mkt = {31: "港股", 74: "美股"}.get(q.market, "")
     print("=" * 58)
-    print(" %s  %s" % (q.code, q.server_time or datetime.now().strftime("%H:%M:%S")))
+    label = "%s %s" % (mkt, q.code) if mkt else "%s  %s" % (q.code, q.server_time or datetime.now().strftime("%H:%M:%S"))
+    print(" %s" % label)
     print(" 最新 %-10.2f  涨跌 %+8.2f (%+.2f%%)" % (q.price, q.price - q.pre_close, pct))
     print(" 今开 %-10.2f  最高 %.2f  最低 %.2f" % (q.open, q.high, q.low))
     print(" 昨收 %-10.2f  成交量 %s  成交额 %s" % (q.pre_close, _fmt_num(q.vol), _fmt_num(q.amount)))
@@ -144,31 +135,9 @@ def _print_cn_quote(q) -> None:
     print()
 
 
-def _print_ex_quote(market: int, code: str, q: dict | None) -> None:
-    if not q:
-        print(" %s: 无报价数据" % code)
-        return
-    price, pre = q.get("price") or 0, q.get("pre_close") or 0
-    mkt = {31: "港股", 74: "美股"}.get(market, "扩展")
-    print("=" * 58)
-    print(" %s %s" % (mkt, code))
-    print(" 最新 %-10.2f  涨跌 %+8.2f (%s)" % (price, price - pre, _pct(price, pre)))
-    print(" 今开 %-10.2f  最高 %.2f  最低 %.2f" % (
-        q.get("open") or 0, q.get("high") or 0, q.get("low") or 0))
-    print(" 昨收 %-10.2f  总量 %s" % (pre, _fmt_num(q.get("zongliang") or 0)))
-    print()
-
-
 async def cmd_kline(td: TdxData, sym: str, period: KlinePeriod, count: int,
                     start: int, adjust: Adjust) -> None:
-    s = parse_symbol(sym)
-    if s.kind == "cn":
-        bars = await td.get_kline(Market(s.market), s.code, period, start=start,
-                                  count=count, adjust=adjust)
-    elif s.kind == "index":
-        bars = await td.get_index_kline(Market(s.market), s.code, period, start=start, count=count)
-    else:
-        bars = await td.get_kline(ExMarket(s.market), s.code, period, start=start, count=count)
+    bars = await td.get_bars(sym, period, start=start, count=count, adjust=adjust)
     print("%s K线 (%s, %d根):" % (sym, period.name, len(bars)))
     print("  %-12s %8s %8s %8s %8s %12s" % ("日期", "开盘", "最高", "最低", "收盘", "成交量"))
     for b in bars:
@@ -256,8 +225,7 @@ async def cmd_list(td: TdxData, market: str, count: int) -> None:
 
 
 async def cmd_auction(td: TdxData, sym: str) -> None:
-    s = parse_symbol(sym)
-    items = await td.get_auction(Market(s.market), s.code)
+    items = await td.get_auction(sym)
     print("%s 集合竞价 (%d条):" % (sym, len(items)))
     for a in items:
         print("  %s  价格=%.3f  量=%d  %s" % (
@@ -266,7 +234,7 @@ async def cmd_auction(td: TdxData, sym: str) -> None:
 
 
 async def cmd_unusual(td: TdxData, market: str, count: int) -> None:
-    items = await td.get_unusual(MARKET_NAMES[market], count=count)
+    items = await td.get_unusual(market, count=count)
     print("市场异动 (%d条):" % len(items))
     for u in items:
         print("  %s %s %s" % (getattr(u, "code", ""), getattr(u, "name", ""),
@@ -274,8 +242,7 @@ async def cmd_unusual(td: TdxData, market: str, count: int) -> None:
 
 
 async def cmd_xdxr(td: TdxData, sym: str) -> None:
-    s = parse_symbol(sym)
-    items = await td.get_xdxr(Market(s.market), s.code)
+    items = await td.get_xdxr(sym)
     print("%s 除权除息 (%d条):" % (sym, len(items)))
     for x in items[:20]:
         print("  %s  送%g 配%g 派%g" % (
@@ -284,23 +251,20 @@ async def cmd_xdxr(td: TdxData, sym: str) -> None:
 
 
 async def cmd_finance(td: TdxData, sym: str) -> None:
-    s = parse_symbol(sym)
-    f = await td.get_finance(Market(s.market), s.code)
-    if not f:
+    fins = await td.get_finance(sym)
+    if not fins:
         print("无财务数据")
         return
-    for k, v in asdict(f).items():
+    for k, v in asdict(fins[0]).items():
         print("  %-24s %s" % (k, v))
 
 
 async def cmd_flow(td: TdxData, sym: str) -> None:
-    s = parse_symbol(sym)
-    f = await td.get_capital_flow(Market(s.market), s.code)
-    if isinstance(f, dict):
-        items = f.items()
-    else:
-        items = asdict(f).items()
-    for k, v in items:
+    flows = await td.get_capital_flow(sym)
+    if not flows:
+        print("无资金流向数据")
+        return
+    for k, v in asdict(flows[0]).items():
         print("  %-20s %s" % (k, v))
 
 

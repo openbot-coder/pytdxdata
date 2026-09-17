@@ -20,7 +20,7 @@ from pytdxdata.models import KlinePeriod
 
 async def main():
     async with TdxData() as td:                      # 自动探测服务器 + 建池 + 建缓存
-        bars = await td.get_kline(1, "600000", KlinePeriod.DAY, count=2400)
+        bars = await td.get_bars("sh600000", KlinePeriod.DAY, count=2400)
         print(bars[-1].datetime, bars[-1].close)
 
 asyncio.run(main())
@@ -35,7 +35,7 @@ asyncio.run(main())
 | ⚡ **并发分页** | 把大请求拆成显式 `start` 偏移的页，多连接并行拉取、按序拼接、失败换连接重试 |
 | 🔀 **双通道整合** | 标准通道（经典行情）+ MAC 通道（逐笔 / 复权 / 1分钟K线），按命令自动选路 |
 | 📄 **服务器文件解析** | 板块 `block_*.dat` / 行业 `tdxhy.cfg` / 历史财报 `gpcw*.zip` **下载即解析**成 dataclass（纯 stdlib），无需自己拆二进制 |
-| 🚀 **批量下载** | `get_kline_batch` / `get_minute_batch`，多股票自动并发，连接池分配到不同服务器 |
+| 🚀 **批量下载** | `get_bars` / `get_minutes` 传标的列表即多股票并发，连接池自动分配到不同服务器 |
 | 📦 **零重型依赖** | 返回 `list[dataclass]`，pandas / polars 由调用方按需转换 |
 
 ## 从这里开始
@@ -70,7 +70,7 @@ asyncio.run(main())
 
     ---
 
-    51 个数据方法（另有 `start` / `close`），从 docstring 实时生成，不会过期。
+    28 个统一方法（+ 33 个 deprecated 别名），从 docstring 实时生成，不会过期。
 
     [:octicons-arrow-right-24: API 参考](api/index.md)
 
@@ -138,6 +138,7 @@ asyncio.run(main())
     - [AI 助手接入](ai.md)
     - [常见问题](faq.md)
     - [更新日志](changelog.md)
+    - [接口重构审查](refactor-audit.md)
     - [参与贡献](contributing.md)
 
 </div>

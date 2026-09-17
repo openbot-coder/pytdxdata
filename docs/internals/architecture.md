@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart TD
-    A["api.py — TdxData<br/>唯一对外入口，51 个公开方法"] --> B["router.py<br/>按命令选通道"]
+    A["api.py — TdxData<br/>唯一对外入口，28 个统一方法 + 33 个废弃别名"] --> B["router.py<br/>按命令选通道"]
     B --> C["pool/ — 动态连接池<br/>标准池 / MAC 池 / EX 池"]
     B --> D["scheduler/ — 并发分页调度<br/>Paginator"]
     C --> E["protocol/ — 协议层<br/>帧 / 变长整数 / 价格 / 日期 / 命令"]
@@ -21,6 +21,7 @@ flowchart TD
 ```
 src/pytdxdata/
 ├── api.py              # 统一接口 TdxData（对外唯一入口）
+├── symbols.py          # 标的解析：字符串 → Symbol（parse_symbol / format_symbol / market_targets）
 ├── router.py           # 标准 / MAC / EX 通道选路
 ├── config.py           # 服务器清单加载（servers.json）
 ├── indicator.py        # 技术指标（纯函数，无依赖）
@@ -55,7 +56,7 @@ src/pytdxdata/
     └── financial.py    #   gpcw.txt / gpcw*.zip
 ```
 
-## 一次 `get_kline` 的完整路径
+## 一次 `get_bars` 的完整路径
 
 ```mermaid
 sequenceDiagram
@@ -66,7 +67,7 @@ sequenceDiagram
     participant P as pool/
     participant S as scheduler/
 
-    U->>A: get_kline(SH, 600000, DAY, count=2400)
+    U->>A: get_bars("sh600000", DAY, count=2400)
     A->>A: 规范化缓存键
     A->>C: 查缓存
     alt 命中
@@ -99,7 +100,7 @@ sequenceDiagram
 |---|---|
 | **零运行时依赖** | 用 `socket` / `zlib` / `struct` / `sqlite3` / `asyncio` 全部搞定，避免依赖地狱和版本冲突 |
 | **返回 `list[dataclass]`** | 不让调用方被 pandas 绑架；需要 DataFrame 自己转一行 |
-| **API 向后兼容** | 新增能力用新方法名（`get_block_parsed` 而不是改 `get_block_info` 的返回类型），老代码永不失效 |
+| **API 向后兼容** | 一个数据类型收敛为一个跨市场统一方法；旧方法名保留为 deprecated 别名（1.0 移除），老代码在兼容窗口内仍可用 |
 
 ## 下一步
 

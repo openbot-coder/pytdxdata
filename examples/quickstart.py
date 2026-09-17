@@ -4,18 +4,19 @@
     python examples/quickstart.py
 
 说明：数据来自通达信公开行情服务器（无需账号，15 分钟延时）。
+标的一律用字符串（``sh600000`` / ``sz000001`` / ``hk00700`` / ``usAAPL`` / ``cffex:IFL0``）。
 """
 
 import asyncio
 
-from pytdxdata import KlinePeriod, Market, TdxData
+from pytdxdata import TdxData
 
 
 async def main() -> None:
     # TdxData 为异步上下文管理器：进入时建连，退出时释放
     async with TdxData() as td:
         # 1) 批量五档报价（可一次传多只，超过 80 只自动切批）
-        quotes = await td.get_quotes([(Market.SH, "600000"), (Market.SZ, "000001")])
+        quotes = await td.get_quotes(["sh600000", "sz000001"])
         print("== 报价 ==")
         for q in quotes:
             print(
@@ -24,7 +25,7 @@ async def main() -> None:
             )
 
         # 2) 日K线（最近 10 根）
-        bars = await td.get_kline(Market.SH, "600000", KlinePeriod.DAY, count=10)
+        bars = await td.get_bars("sh600000", count=10)
         print("\n== 日K（最近 3 根）==")
         for b in bars[-3:]:
             print(
@@ -33,7 +34,7 @@ async def main() -> None:
             )
 
         # 3) 当日分时
-        minutes = await td.get_minute(Market.SH, "600000")
+        minutes = await td.get_minutes("sh600000")
         latest = minutes[-1].price if minutes else "-"
         print(f"\n== 分时 ==\n共 {len(minutes)} 个点，最新价={latest}")
 

@@ -6,7 +6,7 @@
 import asyncio
 from pathlib import Path
 from pytdxdata import TdxData
-from pytdxdata.models import Adjust, ExMarket, KlinePeriod, Market
+from pytdxdata.models import Adjust, KlinePeriod
 ```
 
 ## 全市场日线批量落库
@@ -16,23 +16,22 @@ from pytdxdata.models import Adjust, ExMarket, KlinePeriod, Market
 ```python
 async def dump_all_daily():
     async with TdxData(cache_dir=Path("./tdx_cache")) as td:
-        codes = await td.get_security_list_all(Market.SZ)      # 缓存 1 天
-        symbols = [(Market.SZ, s.code) for s in codes]
+        infos = await td.get_universe("sz")                    # 缓存 1 天
+        symbols = [i.symbol for i in infos]                    # ["sz000001", ...]
 
-        bars = await td.get_kline_batch(
+        bars = await td.get_bars(
             symbols,
             KlinePeriod.DAY,
             count=800,
             adjust=Adjust.QFQ,
             concurrency=12,
         )
-        print(f"{len(bars)} / {len(symbols)} 只拿到数据")
+        got = {b.symbol for b in bars}
+        print(f"{len(got)} / {len(symbols)} 只拿到数据")
 
-        for code, rows in bars.items():
-            if not rows:
-                continue
-            # 落库 / 写 parquet 都行，这里只演示
-            print(code, len(rows), rows[-1].datetime, rows[-1].close)
+        # bars 是扁平 list[SecurityBar]（按标的/时间排序），落库 / 写 parquet 都行
+        if bars:
+            print(bars[-1].symbol, bars[-1].datetime, bars[-1].close)
 ```
 
 !!! tip "分页与并发的取舍"
@@ -41,12 +40,12 @@ async def dump_all_daily():
 
 ## 分钟线增量更新
 
-只拉「上次之后」的部分，用 `get_kline_since` 省掉全量重拉。
+只拉「上次之后」的部分，用 `get_bars(start_date=...)` 省掉全量重拉。
 
 ```python
-async def update_minute(code: str, last_dt):
+async def update_minute(symbol: str, last_dt):
     async with TdxData(cache_dir=Path("./tdx_cache")) as td:
-        rows = await td.get_kline_since(Market.SZ, code, KlinePeriod.MIN_1, since=last_dt)
+        rows = await td.get_bars(symbol, KlinePeriod.MIN_1, start_date=last_dt)
         return [r for r in rows if r.datetime > last_dt]
 ```
 
@@ -75,7 +74,7 @@ async def poll_quotes(symbols, interval=5.0):
 async def sector_rotation():
     async with TdxData() as td:
         # 近 5 日概念板块涨幅排行
-        top = await td.get_board_change_ranking(board_type=2, days=5, top_n=10)
+        top = await td.get_board_change_ranking(kind="concept", days=5, top_n=10)
         for row in top:
             print(row)
 
@@ -92,18 +91,18 @@ async def sector_rotation():
 ## 个股所属板块（反向查询）
 
 ```python
-async def belong(code: str):
+async def belong(symbol: str):
     async with TdxData() as td:
-        for b in await td.get_belong_board(Market.SH, code):
+        for b in await td.get_board_of(symbol):
             print(b)
 ```
 
 ## 逐笔复盘
 
 ```python
-async def review_transactions(code: str, ymd: int):
+async def review_transactions(symbol: str, ymd: int):
     async with TdxData() as td:
-        rows = await td.get_transactions(Market.SZ, code, date=ymd, count=2000)
+        rows = await td.get_ticks(symbol, date=ymd, count=2000)
         total = sum(r.trade_count or 0 for r in rows)
         buy = sum(r.vol for r in rows if r.bs_flag == 0)     # 主动买
         sell = sum(r.vol for r in rows if r.bs_flag == 1)    # 主动卖
@@ -113,12 +112,10 @@ async def review_transactions(code: str, ymd: int):
 ## 财务因子快照
 
 ```python
-async def finance_snapshot(codes):
+async def finance_snapshot(symbols):
     async with TdxData() as td:
-        for mkt, code in codes:
-            fin = await td.get_finance(mkt, code)      # 标准通道，最新快照
-            if fin:
-                print(code, fin)
+        for fin in await td.get_finance(symbols):   # 标准通道，最新快照
+            print(fin.symbol, fin)
 ```
 
 历史专业财报（`gpcw*.zip`，含多报告期）走文件接口：
@@ -173,14 +170,14 @@ async def snapshot_blocks():
 ```python
 async def ex_markets():
     async with TdxData() as td:
-        hk = await td.get_kline(ExMarket.HK_MAIN_BOARD, "00700", KlinePeriod.DAY, count=700)
-        us = await td.get_kline(ExMarket.US_STOCK, "AAPL", KlinePeriod.DAY, count=700)
-        fut = await td.get_kline(ExMarket.CFFEX_FUTURES, "IFL0", KlinePeriod.DAY, count=700)
-        opt = await td.get_kline(ExMarket.SH_STOCK_OPTION, "10010971", KlinePeriod.DAY, count=700)
+        hk = await td.get_bars("hk00700", KlinePeriod.DAY, count=700)
+        us = await td.get_bars("usAAPL", KlinePeriod.DAY, count=700)
+        fut = await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)
+        opt = await td.get_bars("sh_stock_option:10010971", KlinePeriod.DAY, count=700)
         print(len(hk), len(us), len(fut), len(opt))
 
         # 港股全量逐笔（自动翻页，≤50 页 / 9 万条）
-        ticks = await td.get_goods_transaction_all(ExMarket.HK_MAIN_BOARD, "00700")
+        ticks = await td.get_ticks("hk00700", count=None)
         print(len(ticks))
 ```
 
@@ -191,9 +188,9 @@ async def ex_markets():
 ```python
 import pandas as pd
 
-async def to_dataframe(code: str):
+async def to_dataframe(symbol: str):
     async with TdxData() as td:
-        bars = await td.get_kline(Market.SH, code, KlinePeriod.DAY, count=800)
+        bars = await td.get_bars(symbol, KlinePeriod.DAY, count=800)
     df = pd.DataFrame([{
         "dt": b.datetime, "open": b.open, "high": b.high,
         "low": b.low, "close": b.close, "vol": b.vol, "amount": b.amount,
@@ -219,10 +216,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-@app.get("/kline/{code}")
-async def kline(code: str, request: Request):
+@app.get("/kline/{symbol}")
+async def kline(symbol: str, request: Request):
     td = request.app.state.td
-    bars = await td.get_kline(Market.SH, code, KlinePeriod.DAY, count=30)
+    bars = await td.get_bars(symbol, KlinePeriod.DAY, count=30)
     return [{"dt": str(b.datetime), "close": b.close} for b in bars]
 ```
 

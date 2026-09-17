@@ -8,11 +8,11 @@
 ```python
 import asyncio
 from pytdxdata import TdxData
-from pytdxdata.models import KlinePeriod, Market
+from pytdxdata.models import KlinePeriod
 
 async def main():
     async with TdxData() as td:
-        bars = await td.get_kline(Market.SH, "600000", KlinePeriod.DAY, count=240)
+        bars = await td.get_bars("sh600000", KlinePeriod.DAY, count=240)
         print(bars[-1])
 
 asyncio.run(main())
