@@ -258,8 +258,10 @@ from pytdxdata import (
 | `schedule_probe(hosts=None)` | 连接池用：挂后台 task 并返回该 task；无事件循环时返回 `None` |
 | `get_probe_cache()` | 取进程级单例 |
 
-**`pytdxdata.server_probe`**（服务器探测，可 `python -m pytdxdata.server_probe` 运行）
-`load_servers()` / `save_servers(cfg)` / `SERVERS_FILE`
+**`pytdxdata.server_probe`**（离线服务器探测，`python -m pytdxdata.server_probe`）
+`load_servers()` / `save_servers(cfg)` / `SERVERS_FILE` / `probe_one(server, timeout, discover)`
+CLI 开关：`--discover`（三种协议全测并据实修正 `protocols`，同时剔除脏记录）/
+`--group standard|mac|ex` / `--refresh`（只重测 `status=ok` 的）/ `--timeout`
 
 ## 五、CLI（`tdx` 命令，来自 `python -m pytdxdata.cli`）
 

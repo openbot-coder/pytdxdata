@@ -51,11 +51,32 @@ MAC 池远小于标准池，这也解释了为什么逐笔 / 分时的并发能�
 `server_probe` 的探测逻辑**不是只看 TCP 连通性**，而是真实请求一段 K 线并校验内容：
 
 ```bash
-python -m pytdxdata.server_probe
+python -m pytdxdata.server_probe              # 按申报协议全量探测
+python -m pytdxdata.server_probe --discover   # 三种协议全测，并据实修正 protocols
+python -m pytdxdata.server_probe --group ex   # 只测 EX
+python -m pytdxdata.server_probe --refresh    # 只重测当前 status=ok 的
 ```
 
 普通「只 ping 握手」的探测会把这类坏节点放进来，症状是**偶发的空返回**——
 比直接连不上更难查。所以探测必须校验数据。
+
+写回字段：`status` / `latency` / `checked_at` / `checked_date` / `fast_pool`，
+以及顶层 `version` / `checked_date` / `note`。其中 `fast_pool` 与运行时缓存里的 `fast`
+用同一条规则（整体延迟前 10 名，或延迟 < 200ms），用于**还没有当日缓存时**的冷启动排序。
+
+### 为什么需要 `--discover`
+
+「申报协议」会过期。实测（2026-09-21）有一批服务器的 **`0x010C` 标准 K 线变成空响应
+（返回 2 字节空壳），但同端口同主机的 `0x122E` MAC 帧正常**——它们从 `standard` 退化成了
+`mac`-only。只测申报协议的话，这类退化永远发现不了，标准池会一直含着一批死节点。
+
+`--discover` 对每台主机把三种协议都测一遍，并据实测结果重写 `protocols`；
+配套两个必须处理的细节：
+
+- **失败必须重试一次**再判定不支持。单次抖动会误删协议，而 `protocols` 被收窄后不会自动恢复。
+- **EX 握手模式**申报可能错，探测失败时换另一种（`login` ⇄ `setup`）再试。
+- 无任何协议可达时**不动 `protocols`**，只把 `status` 置 `fail`——保留"它申报过什么"的信息。
+- 顺带剔除 `ip` 非法的脏记录（历史遗留如 `"s1"`）。
 
 ## 运行时：当日测速缓存 {#daily-probe}
 
