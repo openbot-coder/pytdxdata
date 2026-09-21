@@ -70,7 +70,7 @@ from pytdxdata import (
 | 方法 | 返回 | 说明 |
 |------|------|------|
 | `get_ticks(symbols, *, date=None, start=0, count=None, concurrency=6)` | `list[TransactionRecord]` | 跨市场逐笔成交 |
-| `get_minutes(symbols, *, date=None, sampling=False, concurrency=6)` | `list[MinuteBar]` | 跨市场分时（sampling=True 取缩略采样） |
+| `get_minutes(symbols, *, date=None, sampling=False, concurrency=6)` | `list[MinuteBar]` | 跨市场分时（sampling=True 取缩略采样：A股由 0x122D 派生，扩展市场 0x254D） |
 
 #### 公司信息/文件/板块
 
@@ -109,7 +109,7 @@ from pytdxdata import (
 | `get_transactions(market, code, *, date=None, start=0, count=2000)` | `list[TransactionRecord]` | 逐笔成交（MAC，含 trade_count），支持历史日期 |
 | `get_minute(market, code, *, date=None)` | `list[MinuteBar]` | 分时（MAC 0x122D，可历史） |
 | `get_minute_batch(stocks, *, date=None, concurrency=6)` | `dict[str, list[MinuteBar]]` | 批量分时 |
-| `get_chart_sampling(market, code)` | `list[float]` | 分时缩略采样（A股，MAC 0x254D） |
+| `get_chart_sampling(market, code)` | `list[float]` | 分时缩略采样（A股由 MAC **0x122D** 派生；0x254D 仅 EX 通道可用） |
 
 ### 2.5 证券列表（旧接口，共 3 个） {#legacy-list}
 
@@ -131,13 +131,13 @@ from pytdxdata import (
 | `get_block_info(filename)` | `bytes` | 板块文件**原始字节**（先查元数据再分块下载） |
 | `get_report_file(filename)` | `bytes` | 报告/财务文件**原始字节**（标准 0x06B9） |
 | `get_financial_file_list()` | `list[str]` | 财务文件列表**原始行**（tdxfin/gpcw.txt） |
-| `get_financial_records(filename)` | `bytes` | 财务文件内容（gpcw*.zip 原始字节） |
+| `get_financial_records(filename)` | `bytes` | 财报 `.dat` 原始字节（索引写 `.zip` 但服务器只有 `.dat` 时自动回退；取不到返回 `b""`） |
 | `get_file_meta(filename)` | `FileMeta` | 远程文件元信息（MAC 0x1215） |
 | `download_file(filename, filesize=0)` | `bytes` | 下载完整远程文件（MAC 0x1217，分块） |
 | **`get_block_parsed(filename)`** | `list[TdxBlock]` | 板块文件**下载+解析**为板块成分（category 按文件名推断：0行业/2概念/3风格） |
 | **`get_industry_map()`** | `dict[str, IndustryInfo]` | tdxhy.cfg **下载+解析**：`{代码: 通达信行业+申万行业}` |
 | **`get_financial_file_infos()`** | `list[FinancialFileInfo]` | gpcw.txt **下载+解析**：文件名/MD5/大小 |
-| **`get_financial_records_parsed(filename)`** | `list[FinancialRecord]` | gpcw*.zip **解压+解析**：每股原始 float 字段（报告期取自文件名，缺失回退头部） |
+| **`get_financial_records_parsed(filename)`** | `list[FinancialRecord]` | 财报**解析**：每股原始 float 字段。可直接传 `get_financial_file_infos()` 的 `filename`——自动纠正服务器实际文件名（`.zip`/`.dat` 两种形态都支持）；报告期取自文件名，缺失回退头部 |
 
 > 解析层独立于网络层：解析器位于 `pytdxdata.codec`（纯标准库 `struct`/`zipfile`），可脱网单测；
 > 原 `get_*` 返回 `bytes`/`list[str]` 的方法保持**向后兼容**，解析版为**新增**方法。
@@ -283,7 +283,7 @@ CLI 开关：`--discover`（三种协议全测并据实修正 `protocols`，同�
 | `tdx block [filename] [--limit 30] [--codes]` | 板块文件 下载+解析（block_*.dat → 成分股） |
 | `tdx industry [codes...] [--limit 30] [--search 词]` | 行业分类 下载+解析（tdxhy.cfg） |
 | `tdx financial-list [--limit 30]` | 历史专业财报文件索引（gpcw.txt） |
-| `tdx financial <filename> [--code X] [--limit 5] [--fields 4]` | 历史专业财报记录 下载+解析（gpcw*.zip） |
+| `tdx financial <filename> [--code X] [--limit 5] [--fields 4]` | 历史专业财报记录 下载+解析（文件名自动纠正，见 `get_financial_records_parsed`） |
 | `tdx server-info` | 服务器交易时段 |
 | `tdx market-stat` | 市场统计 |
 

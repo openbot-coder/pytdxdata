@@ -118,7 +118,20 @@ async def finance_snapshot(symbols):
             print(fin.symbol, fin)
 ```
 
-历史专业财报（`gpcw*.zip`，含多报告期）走文件接口：
+历史专业财报（`gpcw*`，含多报告期）走文件接口。
+
+!!! warning "索引里的文件名与服务器实际不一致"
+    `tdxfin/gpcw.txt` 索引里写的是 `gpcwYYYYMMDD.zip`，但服务器实际只提供**未压缩的**
+    `tdxfin/gpcwYYYYMMDD.dat` —— 这些差异已由 `get_financial_records_parsed()` 内部处理，
+    直接把索引里的 `filename` 传进去即可。
+
+    另外索引里**含有尚未生成的占位条目**（`filesize` 只有百来字节），取它们会得到空列表。
+    想拿最新一期可用数据，先按体积过滤：
+
+    ```python
+    usable = [fi for fi in infos if fi.filesize > 500_000]   # 排除占位条目
+    records = await td.get_financial_records_parsed(usable[0].filename)
+    ```
 
 ```python
 async def history_financials(code: str):

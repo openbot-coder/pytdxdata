@@ -6,14 +6,19 @@ from __future__ import annotations
 
 import io
 import struct
-import unittest.mock as mock
 import zipfile
+from unittest import mock
 
 import pytest
 
 from pytdxdata.api import TdxData
 from pytdxdata.codec.block import infer_block_category, parse_block_dat
-from pytdxdata.codec.financial import parse_financial_dat, parse_financial_file_list
+from pytdxdata.codec.financial import (
+    extract_gpcw_dat,
+    looks_like_gpcw_dat,
+    parse_financial_dat,
+    parse_financial_file_list,
+)
 from pytdxdata.codec.industry import parse_tdxhy_cfg
 from pytdxdata.models import FinancialFileInfo, FinancialRecord, IndustryInfo, TdxBlock
 
@@ -317,3 +322,136 @@ async def test_api_get_financial_records_parsed_no_date_in_name():
                            new=mock.AsyncMock(return_value=zip_bytes)):
         recs = await td.get_financial_records_parsed("gpcw.zip")
     assert recs[0].report_date == 20260331
+
+
+# --------------------------------------------------------------------------- #
+# looks_like_gpcw_dat / extract_gpcw_dat（BUG-2 修复的判据层）
+# --------------------------------------------------------------------------- #
+
+def test_looks_like_gpcw_dat_accepts_real_dat():
+    assert looks_like_gpcw_dat(_valid_two_record_dat()) is True
+
+
+def test_looks_like_gpcw_dat_rejects_short_shell():
+    """服务器对不存在的文件名回的空壳（0~1 字节）必须判否。"""
+    assert looks_like_gpcw_dat(b"") is False
+    assert looks_like_gpcw_dat(b"\x00") is False
+    assert looks_like_gpcw_dat(b"abcd") is False
+
+
+def test_looks_like_gpcw_dat_rejects_zero_header():
+    """长度够但 header 全零（max_count=0 / report_size=0）也要判否。"""
+    assert looks_like_gpcw_dat(b"\x00" * 64) is False
+
+
+def test_looks_like_gpcw_dat_rejects_report_size_not_multiple_of_4():
+    data = _make_dat_raw([(b"600000", 1, 31)], struct.pack("<2f", 1.0, 2.0),
+                         report_size=6)
+    assert looks_like_gpcw_dat(data) is False
+
+
+def test_looks_like_gpcw_dat_rejects_truncated_index():
+    """header 声称的条目数超出实际长度 -> 判否。"""
+    data = _make_dat_raw([(b"600000", 1, 31)], struct.pack("<2f", 1.0, 2.0),
+                         max_count=100)
+    assert looks_like_gpcw_dat(data) is False
+
+
+def test_extract_gpcw_dat_from_uncompressed():
+    dat = _valid_two_record_dat()
+    assert extract_gpcw_dat(dat) == dat
+
+
+def test_extract_gpcw_dat_from_zip():
+    dat = _valid_two_record_dat()
+    assert extract_gpcw_dat(_make_financial_zip(dat)) == dat
+
+
+def test_extract_gpcw_dat_empty_and_garbage():
+    assert extract_gpcw_dat(b"") == b""
+    assert extract_gpcw_dat(b"\x00") == b""
+    assert extract_gpcw_dat(b"not a financial file") == b""
+
+
+def test_extract_gpcw_dat_zip_without_dat_member():
+    assert extract_gpcw_dat(_make_financial_zip(b"x", inner_name="readme.txt")) == b""
+
+
+def test_extract_gpcw_dat_zip_with_invalid_inner_dat():
+    """zip 里虽有 .dat，但内容不是有效财报数据 -> 空。"""
+    assert extract_gpcw_dat(_make_financial_zip(b"\x00" * 4)) == b""
+
+
+def test_extract_gpcw_dat_broken_zip():
+    """以 PK 开头但不是合法 zip -> 空，不抛异常。"""
+    assert extract_gpcw_dat(b"PK\x03\x04broken-not-a-zip") == b""
+
+
+# --------------------------------------------------------------------------- #
+# TdxData._fetch_financial_dat 候选回退（BUG-2 回归）
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.asyncio
+async def test_fetch_financial_dat_falls_back_to_uncompressed_dat():
+    """索引名 ``gpcw*.zip`` 取不到时，必须回退到服务器实际的 ``tdxfin/*.dat``。"""
+    td = _new_tdxdata()
+    dat = _valid_two_record_dat()
+    seen: list[str] = []
+
+    async def fake(name: str) -> bytes:
+        seen.append(name)
+        if name == "tdxfin/gpcw20260331.dat":
+            return dat
+        if name == "gpcw20260331.zip":
+            return b"\x00"          # 裸名 -> MAC 路由 -> 1 字节空壳
+        return b""                  # 带前缀的 .zip 不存在
+
+    with mock.patch.object(td, "get_file", new=fake):
+        got = await td._fetch_financial_dat("gpcw20260331.zip")
+
+    assert got == dat
+    assert seen == ["tdxfin/gpcw20260331.zip", "tdxfin/gpcw20260331.dat"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_financial_dat_prefers_declared_zip_when_present():
+    """服务器若恢复提供 .zip，应优先用索引声明的那个名字。"""
+    td = _new_tdxdata()
+    dat = _valid_two_record_dat()
+    seen: list[str] = []
+
+    async def fake(name: str) -> bytes:
+        seen.append(name)
+        return _make_financial_zip(dat)
+
+    with mock.patch.object(td, "get_file", new=fake):
+        got = await td._fetch_financial_dat("tdxfin/gpcw20260331.zip")
+
+    assert got == dat
+    assert seen == ["tdxfin/gpcw20260331.zip"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_financial_dat_skips_raising_candidate():
+    """某个候选取回时抛异常，不应中断，继续试后面的候选。"""
+    td = _new_tdxdata()
+    dat = _valid_two_record_dat()
+
+    async def fake(name: str) -> bytes:
+        if name.endswith(".zip"):
+            raise ConnectionError("模拟网络错误")
+        return dat
+
+    with mock.patch.object(td, "get_file", new=fake):
+        assert await td._fetch_financial_dat("gpcw20260331.zip") == dat
+
+
+@pytest.mark.asyncio
+async def test_fetch_financial_dat_all_candidates_fail_returns_empty():
+    td = _new_tdxdata()
+
+    async def fake(name: str) -> bytes:
+        return b""
+
+    with mock.patch.object(td, "get_file", new=fake):
+        assert await td._fetch_financial_dat("gpcw20260331.zip") == b""

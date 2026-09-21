@@ -23,8 +23,28 @@
   全接口回归测试里对旧探针入口（`pool.get_probe_cache`）的替身改为新入口（`pool.schedule_probe`），
   保证单测不触发真实网络测速。
 
+### 修复
+
+- **A股分时缩略采样 100% 失败**（`get_minutes(sampling=True)` / `get_chart_sampling()`）：
+  旧实现走 `MacChartSamplingCmd`（**0x254D**），但该 opcode 属于 **EX 协议**，7709 标准 /
+  MAC 主机对它一律不响应——实测 3 台主机各 10s 超时，叠加连接池 3 次重试约 24s 才抛错。
+  现改为**由分时（0x122D）数据派生**价格点（分时本身就是 240 点，语义一致），
+  实测 4 个 A股 场景均在 0.1s 内返回 240 点；EX 通道仍用 0x254D（84 点）。
+
+- **历史专业财报整条链路不可用**（`get_financial_records_parsed()`）：
+  `tdxfin/gpcw.txt` 索引里写的是裸 `gpcwYYYYMMDD.zip`，而服务器**实际只提供未压缩的**
+  `tdxfin/gpcwYYYYMMDD.dat`。旧实现把索引名直接丢给 `zipfile` → 必然 `BadZipFile`；
+  废弃别名 `get_financial_records()` 更危险，会**静默返回 0~1 字节空壳**而不报错。
+  现按候选名（`tdxfin/*.zip` → `tdxfin/*.dat` → 原名）逐个尝试并校验数据形态，
+  zip 与未压缩 dat 都支持。实测 `gpcw20260630.zip` → **5568 条**、
+  `gpcw20260331.zip` → **5547 条**（样本 000001，584 个 float 字段），
+  别名返回 **13,068,116 字节**真实数据；尚未生成的占位条目
+  （如 `gpcw20260930.zip`，filesize=164）优雅返回空列表而非报错。
+
 ### 新增
 
+- `codec.financial` 新增 `looks_like_gpcw_dat()` / `extract_gpcw_dat()`：
+  财报字节的形态判定与「zip / 未压缩 dat」统一提取（纯标准库，可脱网单测）
 - 环境变量 `PYPYTDX_DATA_CACHE_DIR`（覆盖测速缓存目录）、
   `PYPYTDX_DATA_DISABLE_PROBE`（关闭测速，CI / 测试用）
 - `tests/test_probe_cache.py`（37 项）：当日缓存不刷新、跨日重测、

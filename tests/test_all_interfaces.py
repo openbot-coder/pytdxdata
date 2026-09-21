@@ -156,12 +156,15 @@ def _dispatch(cmd) -> object:
         return [{"minutes": 570, "price": 10.0, "vol": 100.0, "direction": 0,
                  "zengcang": 1.0}]
     if n == "MacTickChartCmd":
-        return [MinuteBar(price=10.0, vol=100.0, hour=9, minute=30)]
+        return [MinuteBar(price=p, vol=100.0, hour=9, minute=30 + i)
+                for i, p in enumerate((10.0, 10.1, 10.2))]
     if n == "SymbolTickChartCmd":
         return [{"minutes": 570, "price": 10.0, "vol": 100.0, "avg": 10.0,
                  "momentum": 0.1}]
     if n == "MacChartSamplingCmd":
-        return [10.0, 10.1, 10.2]
+        # 刻意与 MacTickChartCmd 的 mock 数据不同：A股由分时派生、EX 用 0x254D，
+        # 靠返回值即可区分实际走了哪条命令（BUG-1 回归用）。
+        return [99.0, 98.0]
     # ---- 公司信息 ----
     if n == "MacSymbolInfoCmd":
         return SymbolSnapshot(
@@ -268,6 +271,13 @@ def _make_financial_zip() -> bytes:
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("gpcw.dat", dat)
     return buf.getvalue()
+
+
+def _make_financial_dat() -> bytes:
+    """未压缩 .dat（服务器实际提供的形式）。"""
+    entry = struct.pack("<6sBL", b"600000", 1, 31)
+    header = struct.pack("<1hI1H3L", 0, 20260331, 1, 0, 8, 0)
+    return header + entry + struct.pack("<2f", 1.0, 2.0)
 
 
 # --------------------------------------------------------------------------- #
@@ -485,6 +495,69 @@ async def test_parsed_files(td):
 
 
 # --------------------------------------------------------------------------- #
+# 六之二、BUG 回归（真实联网实测发现，见 tests 说明）
+# --------------------------------------------------------------------------- #
+
+async def test_financial_dat_fallback(td):
+    """BUG-2 回归：索引写 ``.zip``，服务器只给未压缩 ``.dat`` 时必须能回退取到。
+
+    服务器对**不存在的**文件名不报错，而是回 0~1 字节空壳；旧实现会把空壳直接
+    丢给 ``zipfile`` → ``BadZipFile``。现在要求按候选名回退到 ``tdxfin/*.dat``。
+    """
+    calls: list[str] = []
+
+    async def fake_get_file(name: str) -> bytes:
+        calls.append(name)
+        if name == "tdxfin/gpcw20260331.zip":
+            return b""          # 服务器没有 .zip
+        if name == "gpcw20260331.zip":
+            return b"\x00"      # 裸名被路由到 MAC 通道 → 1 字节空壳
+        if name == "tdxfin/gpcw20260331.dat":
+            return _make_financial_dat()
+        return b""
+
+    with mock.patch.object(td, "get_file", new=fake_get_file):
+        recs = await td.get_financial_records_parsed("gpcw20260331.zip")
+
+    assert "tdxfin/gpcw20260331.dat" in calls, "必须回退尝试未压缩 .dat"
+    assert len(recs) == 1 and recs[0].report_date == 20260331
+    assert recs[0].code == "600000"
+
+
+async def test_financial_records_alias_not_silent(td):
+    """BUG-2 回归：废弃别名取不到有效财报数据时应返回 ``b""``，而非 0~1 字节空壳。"""
+    import warnings
+
+    async def empty_get_file(name: str) -> bytes:
+        return b"\x00"
+
+    with mock.patch.object(td, "get_file", new=empty_get_file), warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        got = await td.get_financial_records("gpcw20260331.zip")
+    assert got == b""
+
+
+async def test_sampling_derives_from_tick_chart(td):
+    """BUG-1 回归：A股 ``sampling=True`` 必须由分时(0x122D)派生。
+
+    ``MacChartSamplingCmd``(0x254D) 是 **EX 协议**命令，7709 主机对它一律不响应
+    （实测 3 台各 10s 超时，叠加连接池重试 ≈24s 才报错）。两条路径的 mock 数据刻意
+    不同，以便从结果区分实际走的是哪条命令。
+    """
+    # A股：得到分时派生值（10.0/10.1/10.2），而非 0x254D 的 99.0/98.0
+    a_share = await td.get_minutes("sh600000", sampling=True)
+    a_share_hist = await td.get_minutes("sh600000", date=20260811, sampling=True)
+    assert [b.price for b in a_share] == [10.0, 10.1, 10.2]
+    assert [b.price for b in a_share_hist] == [10.0, 10.1, 10.2]
+    assert all(b.vol == 0.0 and b.avg_price == 0 for b in a_share), "采样点无量/均价"
+    assert [b.fields["i"] for b in a_share] == [0.0, 1.0, 2.0], "点位序号在 fields['i']"
+
+    # EX：仍走 0x254D
+    ex = await td.get_minutes("hk00700", sampling=True)
+    assert [b.price for b in ex] == [99.0, 98.0]
+
+
+# --------------------------------------------------------------------------- #
 # 七、废弃别名（33 个）
 # --------------------------------------------------------------------------- #
 
@@ -543,7 +616,11 @@ async def test_aliases_files(td):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         assert await td.get_financial_file_list() == ["abcd"]
-        assert await td.get_financial_records("tdxfin/gpcw.txt") == b"abcd"
+        with mock.patch.object(td, "get_file",
+                               new=mock.AsyncMock(
+                                   return_value=_make_financial_dat())):
+            assert await td.get_financial_records(
+                "gpcw20260331.zip") == _make_financial_dat()
         assert isinstance(await td.get_company_info_category(1, "600000"), list)
         assert isinstance(await td.get_company_info_content(
             1, "600000", "f.txt"), str)
@@ -578,7 +655,7 @@ async def test_aliases_goods(td):
         assert await td.get_goods_count(31) == 1  # 只有 1 条 market=31
         assert isinstance(await td.get_goods_quotes([(31, "00700")]), list)
         assert isinstance(await td.get_goods_quotes_list(31), list)
-        assert await td.get_goods_chart_sampling(31, "00700") == [10.0, 10.1, 10.2]
+        assert await td.get_goods_chart_sampling(31, "00700") == [99.0, 98.0]
         assert isinstance(await td.get_goods_tick_chart(31, "00700"), list)
         assert isinstance(await td.get_goods_transaction(31, "00700"), list)
         assert isinstance(await td.get_goods_transaction_all(31, "00700"), list)

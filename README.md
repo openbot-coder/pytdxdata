@@ -65,7 +65,7 @@ df = pd.DataFrame([asdict(b) for b in bars])
 | 🔀 双通道整合 | 标准通道（经典行情）+ MAC 通道（逐笔 / 复权 / 1 分钟 K 线），按命令自动选路 |
 | 📦 零重型依赖 | 纯 asyncio + stdlib（socket / zlib / struct / sqlite3） |
 | 📊 全市场覆盖 | A股、港股、美股、期货、期权（46 个扩展市场） |
-| 📄 服务器文件解析 | 板块 `block_*.dat` / 行业 `tdxhy.cfg` / 财报 `gpcw*.zip` **下载即解析**成 dataclass |
+| 📄 服务器文件解析 | 板块 `block_*.dat` / 行业 `tdxhy.cfg` / 财报 `gpcw*` **下载即解析**成 dataclass（索引名与服务器实际文件名不一致时自动纠正） |
 | 🤖 AI 助手友好 | 内置 [`SKILL.md`](https://github.com/openbot-coder/pytdxdata/blob/main/SKILL.md) 与 [`llms.txt`](https://openbot-coder.github.io/pytdxdata/llms.txt) |
 
 ## 文档导航
@@ -104,7 +104,7 @@ curl -o ~/.workbuddy/skills/pytdxdata/SKILL.md --create-dirs \
 
 ```bash
 uv sync                        # 建虚拟环境 + 注册 tdx 命令
-uv run pytest tests/           # 164 个测试用例（协议 / 池 / 缓存 / 分页 / 全接口回归 / 文件解析 / CLI / 文档漂移 / 当日测速缓存）
+uv run pytest tests/           # 182 个测试用例（协议 / 池 / 缓存 / 分页 / 全接口回归 / 文件解析 / CLI / 文档漂移 / 当日测速缓存）
 uv sync --group docs           # 文档站依赖（mkdocs-material + mkdocstrings）
 uv run mkdocs serve            # 本地预览文档站
 ```

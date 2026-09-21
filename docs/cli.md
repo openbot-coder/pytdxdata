@@ -97,7 +97,7 @@ tdx industry --limit 30                    # 只看前 30 条
 
 # 历史专业财报
 tdx financial-list                         # 索引：文件名 / MD5 / 大小（gpcw.txt）
-tdx financial gpcw20260331.zip --limit 5   # 下载 + 解压 + 解析
+tdx financial gpcw20260331.zip --limit 5   # 下载 + 解析（服务器实际给 .dat 时自动回退）
 tdx financial gpcw20260331.zip --code 600000 --fields 8   # 只取指定股票、打印更多字段
 ```
 

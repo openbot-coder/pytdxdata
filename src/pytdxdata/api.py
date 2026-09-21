@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import warnings
 from datetime import date as _date, datetime
 from pathlib import Path
@@ -61,7 +62,7 @@ from .models import (
 )
 from .pool.ex_pool import ExPool
 from .pool.health import HealthEngine
-from .pool.pool import DynamicPool
+from .pool.pool import DynamicPool, PoolTimeoutError
 from .protocol.commands import (
     GetFinanceInfoCmd,
     GetIndexBarsCmd,
@@ -75,6 +76,7 @@ from .protocol.commands import (
     MacKlineCmd,
     MacTransactionCmd,
     MAX_QUOTES,
+    TdxDecodeError,
 )
 from .protocol.commands.ex_ext import (
     GetExHistoryTransactionDataCmd,
@@ -895,8 +897,9 @@ class TdxData:
 
         参数:
             date: ``None``=今天；``YYYYMMDD``=历史某日（A股支持历史分时）。
-            sampling: ``True`` 取缩略采样（约240个价格点，无时间；A股 0x254D，
-                扩展市场同命令），``vol``/``avg_price`` 为 0，点位序号在 ``fields["i"]``。
+            sampling: ``True`` 取缩略采样（约 240 个价格点，无时间），``vol``/
+                ``avg_price`` 为 0，点位序号在 ``fields["i"]``。A股由分时数据派生，
+                扩展市场走 0x254D。
 
         返回:
             ``list[MinuteBar]``，按入参标的顺序拼接，每条带 ``symbol``/``market``/
@@ -920,8 +923,17 @@ class TdxData:
 
         async def fetch() -> bytes:
             if sampling:
-                run = self._execute_ex if sym.is_ex else self._execute_mac
-                prices = await run(MacChartSamplingCmd(sym.market, sym.code))
+                if sym.is_ex:
+                    prices = await self._execute_ex(
+                        MacChartSamplingCmd(sym.market, sym.code))
+                else:
+                    # ⚠️ 不能用 MacChartSamplingCmd(0x254D)：那是 **EX 协议**命令，
+                    # A股/标准通道的 7709 主机对它一律不响应（实测 3 台全 8s 超时，
+                    # 叠加连接池 3 次重试 ≈24s 才报错）。改由分时（0x122D）派生价格点：
+                    # 分时本身就是 240 点，语义与「缩略采样」一致且天然可用。
+                    ticks = await self._execute_mac(
+                        MacTickChartCmd(sym.market, sym.code, ymd))
+                    prices = [b.price for b in ticks]
                 bars = [MinuteBar(price=float(p), vol=0.0, symbol=sym.text,
                                   market=sym.market, code=sym.code, date=ymd,
                                   fields={"i": float(i)})
@@ -1273,27 +1285,59 @@ class TdxData:
         return parse_financial_file_list(await self.get_file("tdxfin/gpcw.txt"))
 
     async def get_financial_records_parsed(self, filename: str) -> list[FinancialRecord]:
-        """财务 zip（``tdxfin/gpcw*.zip``）解压解析 -> ``list[FinancialRecord]``。
+        """财报数据解析 -> ``list[FinancialRecord]``。
+
+        可直接把 :meth:`get_financial_file_infos` 条目里的 ``filename`` 原样传进来：
+        内部会自动纠正「索引名与服务器实际文件名不一致」的问题（索引写
+        ``gpcwYYYYMMDD.zip`` 且不带 ``tdxfin/`` 前缀，服务器实际只提供未压缩的
+        ``tdxfin/gpcwYYYYMMDD.dat``），并兼容 zip 包与未压缩 dat 两种形态。
 
         报告期优先取文件名中的 8 位日期，缺失时回退到 .dat 头部内嵌值。
         """
-        import io
-        import re
-        import zipfile
-
         from .codec.financial import parse_financial_dat
 
-        zip_data = await self.get_file(filename)
-        if not zip_data:
+        dat_data = await self._fetch_financial_dat(filename)
+        if not dat_data:
             return []
-        with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
-            dat_names = [n for n in zf.namelist() if n.endswith(".dat")]
-            if not dat_names:
-                return []
-            dat_data = zf.read(dat_names[0])
-        match = re.search(r"(\d{8})", filename)
+        match = re.search(r"(\d{8})", str(filename))
         report_date = int(match.group(1)) if match else 0
         return parse_financial_dat(dat_data, report_date)
+
+    async def _fetch_financial_dat(self, filename: str) -> bytes:
+        """[内部] 取回 gpcw 财报 ``.dat`` 原始字节，自动纠正服务器文件名差异。
+
+        ``tdxfin/gpcw.txt`` 索引声明的名字（``gpcwYYYYMMDD.zip``、无目录前缀）与服务器
+        实际提供的文件（``tdxfin/gpcwYYYYMMDD.dat``、未压缩）不一致，且对不存在的名字
+        服务器**不报错、只回 0~1 字节空壳**。这里按候选名逐个尝试，并校验取回的字节
+        是否真的是 ``.dat``，返回第一个有效结果；全部失败返回 ``b""``。
+
+        候选顺序：索引声明的 ``.zip`` → 服务器实际的 ``.dat`` → 调用方原样名字（兜底）。
+        """
+        from .codec.financial import extract_gpcw_dat
+
+        raw = str(filename).strip().replace("\\", "/")
+        base = raw.rsplit("/", 1)[-1]
+        stem = re.sub(r"\.(?:zip|dat)$", "", base, flags=re.IGNORECASE)
+        candidates = list(dict.fromkeys([
+            f"tdxfin/{stem}.zip",
+            f"tdxfin/{stem}.dat",
+            base,
+        ]))
+        for name in candidates:
+            try:
+                blob = await self.get_file(name)
+            except (ConnectionError, OSError, TimeoutError,
+                    TdxDecodeError, ValueError, PoolTimeoutError) as exc:
+                # 单个候选取回失败就换下一个（服务器对不存在的名字不一定报错）
+                log.debug("财报候选 %s 取回失败: %s", name, str(exc)[:80])
+                continue
+            dat = extract_gpcw_dat(blob)
+            if dat:
+                log.debug("财报文件命中: %s（%d 字节）", name, len(dat))
+                return dat
+            log.debug("财报候选 %s 非有效 gpcw 数据（%d 字节），继续尝试",
+                      name, len(blob))
+        return b""
 
     # ================================================================== #
     # 内部执行（连接池 + 失败换连接 + 分页）
@@ -1553,9 +1597,13 @@ class TdxData:
         return [l.strip() for l in text.splitlines() if l.strip()]
 
     async def get_financial_records(self, filename: str) -> bytes:
-        """已废弃 -> :meth:`get_financial_records_parsed`。"""
+        """已废弃 -> :meth:`get_financial_records_parsed`。
+
+        返回 gpcw 财报 ``.dat`` 原始字节（服务器给未压缩 ``.dat`` 时自动回退，
+        不再像旧实现那样静默返回 0~1 字节空壳）；取不到时返回 ``b""``。
+        """
         _deprecated("get_financial_records", "get_financial_records_parsed")
-        return await self.get_file(filename)
+        return await self._fetch_financial_dat(filename)
 
     async def get_company_info_category(self, market, code) -> list:
         """已废弃 -> :meth:`get_f10`。"""

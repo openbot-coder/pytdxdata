@@ -17,12 +17,18 @@
 """
 from __future__ import annotations
 
+import io
 import struct
+import zipfile
 
 from ..models import FinancialFileInfo, FinancialRecord
 
 _HEADER_FMT = "<1hI1H3L"
 _INDEX_FMT = "<6sBL"
+
+_HEADER_SIZE = struct.calcsize(_HEADER_FMT)
+_INDEX_SIZE = struct.calcsize(_INDEX_FMT)
+_ZIP_MAGIC = b"PK\x03\x04"
 
 
 def parse_financial_file_list(data: bytes) -> list[FinancialFileInfo]:
@@ -46,8 +52,58 @@ def parse_financial_file_list(data: bytes) -> list[FinancialFileInfo]:
     return out
 
 
+def looks_like_gpcw_dat(data: bytes) -> bool:
+    """粗略判定字节流是否为 gpcw ``.dat``（校验 20 字节 header 的自洽性）。
+
+    用于把「真的取到了财报数据」与「服务器对不存在的文件名回的 0/1 字节空壳」区分开：
+    空壳要么长度不足、要么 header 全零，一律判否。
+
+    Args:
+        data: 待判定的字节流。
+
+    Returns:
+        可疑时返回 True。
+    """
+    if len(data) < _HEADER_SIZE:
+        return False
+    _unknown, _date, max_count, _u1, report_size, _u2 = struct.unpack(
+        _HEADER_FMT, data[:_HEADER_SIZE]
+    )
+    if max_count <= 0 or report_size <= 0 or report_size % 4 != 0:
+        return False
+    # 索引区必须放得下 max_count 条 11 字节条目
+    return _HEADER_SIZE + max_count * _INDEX_SIZE <= len(data)
+
+
+def extract_gpcw_dat(data: bytes) -> bytes:
+    """从「zip 包」或「未压缩 dat」中取出 ``.dat`` 字节；无法识别时返回 ``b""``。
+
+    服务器**实际只提供未压缩的** ``tdxfin/gpcwYYYYMMDD.dat``，而 ``tdxfin/gpcw.txt``
+    索引里写的是 ``gpcwYYYYMMDD.zip``，因此两种形态都要能走通。
+
+    Args:
+        data: zip 包字节或未压缩 ``.dat`` 字节。
+
+    Returns:
+        内层 / 原始的 ``.dat`` 字节；不是有效财报数据时返回 ``b""``。
+    """
+    if not data:
+        return b""
+    if data.startswith(_ZIP_MAGIC):
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                names = [n for n in zf.namelist() if n.lower().endswith(".dat")]
+                if not names:
+                    return b""
+                inner = zf.read(names[0])
+        except (zipfile.BadZipFile, OSError, KeyError):
+            return b""
+        return inner if looks_like_gpcw_dat(inner) else b""
+    return data if looks_like_gpcw_dat(data) else b""
+
+
 def parse_financial_dat(data: bytes, report_date: int = 0) -> list[FinancialRecord]:
-    """解析 gpcw*.zip 内的 .dat 二进制。
+    """解析 gpcw ``.dat`` 二进制（zip 内的或服务器直接给的未压缩形式都行）。
 
     Args:
         data: .dat 文件完整字节。
@@ -56,7 +112,7 @@ def parse_financial_dat(data: bytes, report_date: int = 0) -> list[FinancialReco
     Returns:
         FinancialRecord 列表；数据不足或字段非法时返回空列表。
     """
-    header_size = struct.calcsize(_HEADER_FMT)
+    header_size = _HEADER_SIZE
     if len(data) < header_size:
         return []
 
@@ -72,7 +128,7 @@ def parse_financial_dat(data: bytes, report_date: int = 0) -> list[FinancialReco
     if num_fields <= 0:
         return []
 
-    index_size = struct.calcsize(_INDEX_FMT)
+    index_size = _INDEX_SIZE
     report_fmt = f"<{num_fields}f"
     report_pack_size = struct.calcsize(report_fmt)
 
