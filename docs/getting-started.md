@@ -96,11 +96,15 @@ asyncio.run(main())
 
     ```python
     async with TdxData(
-        standard_servers=[("1.2.3.4", 7709), ("5.6.7.8", 7709)],
-        mac_servers=[("9.10.11.12", 7709)],
+        standard_servers=["1.2.3.4", "5.6.7.8"],
+        mac_servers=["9.10.11.12"],
+        port=7709,
     ) as td:
         ...
     ```
+
+    主机元素**只填主机名**，端口由构造参数 `port=` 统一指定（不写在主机元素里）。
+    等价的免代码写法是环境变量 `PYPYTDX_DATA_STANDARD_HOSTS` / `…_MAC_HOSTS`（逗号分隔）。
 
 ## 服务器清单
 

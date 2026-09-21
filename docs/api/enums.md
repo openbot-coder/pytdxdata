@@ -18,8 +18,8 @@ from pytdxdata.models import Adjust, ExMarket, KlinePeriod, Market
 | `Market.BJ` | `2` | 北京（北交所） |
 
 !!! warning "代码不唯一"
-    **市场 + 代码**才唯一。`(SH, "000001")` 是上证指数，`(SZ, "000001")` 是平安银行。
-    所有接口的第一个参数都是 `market`，就是为了消歧。
+    **市场 + 代码**才唯一。`sh000001` 是上证指数，`sz000001` 是平安银行。
+    统一接口用**字符串标的**把两者一起表达（前缀即市场），避免只写 6 位数字时的歧义。
 
 ## KlinePeriod — K 线周期
 

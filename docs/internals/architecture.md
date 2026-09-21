@@ -23,7 +23,7 @@ src/pytdxdata/
 ├── api.py              # 统一接口 TdxData（对外唯一入口）
 ├── symbols.py          # 标的解析：字符串 → Symbol（parse_symbol / format_symbol / market_targets）
 ├── router.py           # 标准 / MAC / EX 通道选路
-├── config.py           # 服务器清单加载（servers.json）
+├── config.py           # 服务器清单加载 + 选路优先级链 + 用户级测速缓存路径
 ├── indicator.py        # 技术指标（纯函数，无依赖）
 ├── server_probe.py     # 服务器探测，可 python -m 运行
 ├── protocol/           # 协议层
@@ -39,7 +39,7 @@ src/pytdxdata/
 │   ├── pool.py         #   标准 / MAC 动态池
 │   ├── ex_pool.py      #   EX 池
 │   ├── health.py       #   健康分与选路
-│   └── probe_cache.py  #   探测结果缓存
+│   └── probe_cache.py  #   当日全量测速 + 用户级缓存（后台、无感）
 ├── scheduler/
 │   └── paginator.py    # 并发分页调度（3 连接并行）
 ├── cache/

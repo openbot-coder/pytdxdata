@@ -11,7 +11,7 @@ from pytdxdata.models import Adjust, KlinePeriod
 
 ## 全市场日线批量落库
 
-连接池会把不同股票分配到不同服务器，这是 `*_batch` 存在的意义。
+传多标的时，连接池会把不同股票分配到不同服务器——这正是它比逐个 `await` 快的原因。
 
 ```python
 async def dump_all_daily():

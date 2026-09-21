@@ -232,14 +232,31 @@ from pytdxdata import (
 | `boll(values, period=20, mult=2.0)` | 布林带 |
 | `compute_indicators(high, low, close, indicators, params=None, tail=None)` | 统一入口（被 `get_stock_kline_with_indicators` 调用） |
 
-**`pytdxdata.config`**（服务器清单）
+**`pytdxdata.config`**（服务器清单与选路）
 
-| 函数 | 说明 |
+主机来源优先级链（各协议独立）：`PYPYTDX_DATA_*_HOSTS` 环境变量 → **当日测速缓存** →
+包内清单 `fast_pool` → 包内清单 → 代码内置常量。
+
+| 函数 / 常量 | 说明 |
 |------|------|
-| `get_standard_hosts()` | 标准通道服务器列表 |
+| `get_standard_hosts()` | 标准通道服务器列表（按上述优先级链解析） |
 | `get_mac_hosts()` | MAC 通道服务器列表 |
 | `get_ex_hosts()` | EX 扩展市场服务器列表 |
 | `get_ex_handshakes()` | EX 握手方式映射 |
+| `all_probe_candidates()` | 全量候选主机 `{standard, mac, ex}`（清单 ∪ 常量 ∪ env，**不按状态过滤**） |
+| `is_valid_host(host)` | 主机名合法性校验（挡 mock 脏数据 / 非法条目） |
+| `probe_cache_dir()` / `probe_cache_file()` | 用户级当日测速缓存目录 / 文件路径 |
+| `load_probe_cache(today=None, path=None)` | 读当日测速缓存；缺失 / 损坏 / 非今日 / 版本不符 → `None` |
+| `probe_disabled()` | 是否已用 `PYPYTDX_DATA_DISABLE_PROBE` 关闭测速 |
+| `PROBE_CACHE_VERSION` | 测速缓存 payload 版本号 |
+
+**`pytdxdata.pool.probe_cache`**（当日测速：后台执行、对用户无感）
+
+| 符号 | 说明 |
+|------|------|
+| `ProbeCache` | 进程内协调器；`ensure_probe()` 为幂等入口（单飞 + 原子写） |
+| `schedule_probe(hosts=None)` | 连接池用：挂后台 task 并返回该 task；无事件循环时返回 `None` |
+| `get_probe_cache()` | 取进程级单例 |
 
 **`pytdxdata.server_probe`**（服务器探测，可 `python -m pytdxdata.server_probe` 运行）
 `load_servers()` / `save_servers(cfg)` / `SERVERS_FILE`
