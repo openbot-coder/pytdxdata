@@ -281,8 +281,7 @@ async def td():
          mock.patch("pytdxdata.api.get_ex_hosts", return_value=["e1"]), \
          mock.patch("pytdxdata.pool.pool.TdxConnection", new=_MockConn), \
          mock.patch("pytdxdata.pool.ex_pool.ExTdxConnection", new=_MockConn), \
-         mock.patch("pytdxdata.pool.pool.get_probe_cache",
-                    return_value=mock.MagicMock(ensure_probe=mock.AsyncMock())):
+         mock.patch("pytdxdata.pool.pool.schedule_probe", return_value=None):
         t = TdxData(cache_dir=None, pool_min=1, pool_max=2)
         _use("start")
         await t.start()
