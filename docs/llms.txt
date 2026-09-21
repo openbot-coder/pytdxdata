@@ -59,6 +59,19 @@ asyncio.run(main())
 > 旧的分通道/市场方法（`get_kline` / `get_transactions` / `get_goods_*` 等共 33 个）保留为
 > deprecated 别名，1.0 移除；完整对照见[接口重构审查](https://openbot-coder.github.io/pytdxdata/refactor-audit/)与 CHANGELOG。
 
+## 服务器与配置
+
+服务器主机来源有一条优先级链（各协议独立）：环境变量 → **当日测速缓存** → 包内清单
+`fast_pool` → 包内清单 → 代码内置常量。
+
+- `TdxData.start()` 会在**当日首次启动**后台触发一次全量测速，用**真实 K 线命令**判定可达
+  （不是只握手），结果按延迟升序写入**用户级缓存**（Windows `%LOCALAPPDATA%\pytdxdata`、
+  macOS `~/Library/Caches/pytdxdata`、Linux `$XDG_CACHE_HOME/pytdxdata`），当天复用、不再重测。
+- 该操作对调用方**完全无感**：后台执行、不打印、不阻塞 `start()`、失败静默降级。
+  运行时**绝不改写包内 `servers.json`**。
+- 环境变量：`PYPYTDX_DATA_STANDARD_HOSTS` / `…_MAC_HOSTS` / `…_EX_HOSTS`（逗号分隔，手工指定，最高优先）、
+  `PYPYTDX_DATA_CACHE_DIR`（覆盖缓存目录）、`PYPYTDX_DATA_DISABLE_PROBE=1`（关闭测速）。
+
 ## CLI
 
 安装后提供 `tdx` 命令，19 个子命令，不写代码即可取数：

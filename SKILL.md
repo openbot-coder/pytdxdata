@@ -184,6 +184,7 @@ await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 | 循环里逐个 `await get_bars` | 慢 | 用列表传多个标的，自动并发 |
 | 港股/美股五档 bid/ask | 没有（协议不支持） | `fields` 字段位通道有 name 但无五档 |
 | 依赖实时性做信号 | 数据是 15 分钟前的 | 换券商实时源 |
+| 手动改包内 `servers.json` / 写死 IP | 容器只读、升级被覆盖、快节点捞不回来 | 日常靠内置的**当日测速缓存**自动选路；要强制指定就用 `PYPYTDX_DATA_{STANDARD,MAC,EX}_HOSTS` 环境变量 |
 
 ## 深入参考
 

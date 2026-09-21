@@ -121,6 +121,45 @@ from pytdxdata.config import get_standard_hosts, get_mac_hosts, get_ex_hosts
 print(len(get_standard_hosts()), len(get_mac_hosts()), len(get_ex_hosts()))
 ```
 
+### 当日自动测速（无感）
+
+除随包发布的静态清单外，`TdxData` 还在**当日首次启动**时做一次**后台全量测速**：
+
+- 覆盖**全部候选**（包内清单 ∪ 代码内置常量 ∪ 环境变量覆盖），而不是只测当前池里的少数节点
+  ——否则「上次慢、这次快」的节点永远捞不回来
+- 用**真实 K 线命令**判定可达（标准 / MAC / EX 各发一条业务命令并要求非空），
+  能剔除「握手正常但返回空数据」的坏节点
+- 结果按**实测延迟升序**写入**用户级缓存**，当天后续启动直接复用、**不再重测**
+- 全程在后台进行：**不打印、不阻塞 `start()`、失败静默降级**，对调用方完全无感
+
+缓存位置（可用 `PYPYTDX_DATA_CACHE_DIR` 覆盖）：
+
+| 平台 | 路径 |
+|---|---|
+| Windows | `%LOCALAPPDATA%\pytdxdata\hosts-today.json` |
+| macOS | `~/Library/Caches/pytdxdata/hosts-today.json` |
+| Linux / 其他 | `$XDG_CACHE_HOME/pytdxdata/hosts-today.json`（默认 `~/.cache/…`） |
+
+主机选择的优先级（各协议独立）：
+
+1. `PYPYTDX_DATA_STANDARD_HOSTS` / `…_MAC_HOSTS` / `…_EX_HOSTS` 环境变量（手工指定，最高优先）
+2. **当日测速缓存**中该协议实测可达的主机（按延迟升序）
+3. 包内清单里 `status=ok` 的 `fast_pool` 主机
+4. 包内清单里 `status=ok` 的主机
+5. 代码内置常量
+
+!!! note "缓存绝不写回安装目录"
+    测速结果只写入上面的**用户级缓存目录**。`site-packages` 在容器 / 系统级安装 / `pipx`
+    下可能只读，多用户共用一个安装时还会互相覆盖，因此包内 `servers.json` 不会被运行时改写。
+
+环境变量一览：
+
+| 变量 | 作用 |
+|---|---|
+| `PYPYTDX_DATA_STANDARD_HOSTS` / `…_MAC_HOSTS` / `…_EX_HOSTS` | 逗号分隔，手工指定主机（优先级最高，直接跳过测速缓存） |
+| `PYPYTDX_DATA_CACHE_DIR` | 覆盖当日测速缓存目录 |
+| `PYPYTDX_DATA_DISABLE_PROBE=1` | 关闭当日测速与缓存（CI / 测试用，保证确定性） |
+
 ## 生命周期
 
 `TdxData` 必须在 `async with` 内使用，或手动 `await td.start()` / `await td.close()`：

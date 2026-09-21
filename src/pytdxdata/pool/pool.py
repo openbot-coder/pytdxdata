@@ -6,8 +6,9 @@
 - 动态：支持运行时 add() 新服务器；支持后台全量测速入库（当日首次启动）。
 - 单连接约束（核心需求）：per_server_cap 默认 1 —— 一台服务器只允许建立 1 个连接，
   不允许多开，避免对单一券商服务器造成并发压力被限流/封禁。
-- 后台测速（核心需求）：当日首次启动时，在后台对全量候选服务器测速，按
-  「排名前 FAST_POOL_TOP_N 或 延迟 < FAST_POOL_MAX_LATENCY」筛选入库，结果写回 servers.json。
+- 后台测速（核心需求）：当日首次启动时，在后台对**全量候选**服务器测速（覆盖标准/MAC/EX
+  三个协议，而不是只测当前池内节点），结果缓存到用户级缓存目录；当天已有缓存则跳过、不再刷新。
+  全程不阻塞 start()、不打印、不抛错（对用户无感）。详见 pool/probe_cache.py。
 - 弹性：空闲连接超时后由 reaper 缩容回 min_size；支持 stats 统计。
 """
 from __future__ import annotations
@@ -19,7 +20,7 @@ import time
 
 from .connection import TdxConnection
 from .health import HealthEngine
-from .probe_cache import get_probe_cache
+from .probe_cache import schedule_probe
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +102,7 @@ class DynamicPool:
         self._lock = asyncio.Lock()
         self._cond = asyncio.Condition(self._lock)
         self._reaper_task: asyncio.Task | None = None
+        self._probe_task: asyncio.Task | None = None
 
     # ---------- 生命周期 ----------
     async def start(self) -> None:
@@ -108,13 +110,11 @@ class DynamicPool:
             return
         self._started = True
 
-        # 需求①：当日首次启动 → 后台全量测速入库（不阻塞主流程）
+        # 需求①：当日首次启动 → 后台全量测速（不阻塞主流程；当天已有缓存则自动跳过）
+        # 候选清单由 probe_cache 自行枚举全量主机（本池的 servers 只是其中一个子集，
+        # 不能直接当作测速输入，否则只会重测已在池内的少数节点、其余记录永久过期）。
         if self.auto_probe:
-            hosts = list(self.servers)
-            asyncio.create_task(
-                get_probe_cache().ensure_probe(hosts),
-                name="pytdxdata-daily-probe",
-            )
+            self._probe_task = schedule_probe()
 
         targets = self._pick_servers(self.min_size)
         for host in targets:
@@ -175,6 +175,15 @@ class DynamicPool:
         if self._reaper_task is not None:
             self._reaper_task.cancel()
             self._reaper_task = None
+        # 后台测速仍可能持有 socket；取消并等它退场，避免事件循环关闭时冒出
+        # "Task was destroyed but it is pending"（那会破坏"无感"）
+        if self._probe_task is not None:
+            self._probe_task.cancel()
+            try:
+                await self._probe_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._probe_task = None
         async with self._lock:
             for pc in list(self._conns):
                 try:
