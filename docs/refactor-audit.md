@@ -142,7 +142,7 @@
 
 ## 七、验证
 
-- `pytest`：**127 passed**。其中 `tests/test_all_interfaces.py` 为全接口回归：mock 连接逐个
+- `pytest`：**127 passed**（审查当时的快照；当前基线为 164 passed）。其中 `tests/test_all_interfaces.py` 为全接口回归：mock 连接逐个
   调用 63 个公开方法，并以「覆盖哨兵」断言无遗漏（7 条告警为别名测试的预期 `DeprecationWarning`）。
 - `scripts/check_docs.py`：`MUST_LIST_ALL` + `MUST_NOT_BE_STALE` 全部 `[OK]`。
 - 签名核对：统一接口签名与返回类型与本文一致；全仓无 `_as_symbols` 及元组式调用残留。

@@ -104,7 +104,7 @@ curl -o ~/.workbuddy/skills/pytdxdata/SKILL.md --create-dirs \
 
 ```bash
 uv sync                        # 建虚拟环境 + 注册 tdx 命令
-uv run pytest tests/           # 127 个测试用例（协议 / 池 / 缓存 / 分页 / 全接口回归 / 文件解析 / CLI / 文档漂移）
+uv run pytest tests/           # 164 个测试用例（协议 / 池 / 缓存 / 分页 / 全接口回归 / 文件解析 / CLI / 文档漂移 / 当日测速缓存）
 uv sync --group docs           # 文档站依赖（mkdocs-material + mkdocstrings）
 uv run mkdocs serve            # 本地预览文档站
 ```
@@ -115,7 +115,8 @@ uv run mkdocs serve            # 本地预览文档站
 - 标准通道 K 线 `count < 100` 部分服务器返回空 → 分页器已强制 `min_page=100` 规避
 - 港股 / 美股期权在通达信协议内无数据
 - 服务器可用性随时间变化。**当日首次启动会自动在后台测速并缓存**（对调用方无感，当天不再重测）；
-  也可用 `python -m pytdxdata.server_probe` 离线重生成随包清单
+  也可用 `python -m pytdxdata.server_probe` 离线重生成随包清单。
+  缓存路径与三个开关见 [安装与配置 → 当日自动测速](https://openbot-coder.github.io/pytdxdata/getting-started/#当日自动测速无感)
 
 ## 免责声明
 
