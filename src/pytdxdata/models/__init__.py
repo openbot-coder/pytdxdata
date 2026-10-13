@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from enum import IntEnum
 from typing import Any
 
@@ -92,9 +92,25 @@ class Adjust(IntEnum):
     HFQ = 2  # 后复权
 
 
+# 扩展市场中「时间戳跨时区拼接」的市场号：通达信 EX 通道对美股返回的分钟级 K线
+# 里，日期字段是**美东交易日**、时分字段是**北京时间**，两个时区被拼进同一个
+# 五元组，必须归一化（见 SecurityBar.__post_init__）。
+_US_EX_MARKETS: frozenset[int] = frozenset({int(ExMarket.US_STOCK)})
+
+# 归一化判据：北京时间 hour >= 12 的 bar 与美东交易日属同一自然日。美股常规时段
+# 09:30~16:00 EDT = 北京 21:30~次日 04:00（冬令时 22:30~次日 05:00），夏令时/
+# 冬令时下分界都稳定落在 12 点。
+_US_DAY_SPLIT_HOUR = 12
+
+
 @dataclass(slots=True)
 class SecurityBar:
-    """K线记录（价格单位：元）。跨市场统一模型（A股/港股/美股/期货共用）。"""
+    """K线记录（价格单位：元）。跨市场统一模型（A股/港股/美股/期货共用）。
+
+    时间戳口径**统一为北京时间**：A股/港股/期货原始即为北京时间；美股原始是
+    「日期=美东交易日 + 时分=北京时间」的混合值，构造时已还原为真实北京时间
+    （见 ``__post_init__``）。该 bar 归属的交易日见 :attr:`trading_date`。
+    """
     market: int
     code: str
     open: float
@@ -110,9 +126,39 @@ class SecurityBar:
     minute: int = 0
     symbol: str = ""        # 规范化标的串（sz000001 / hk00700），由 API 层填充
 
+    def __post_init__(self) -> None:
+        """美股（EX 通道）时间戳归一化：还原成真实北京时间。
+
+        原始报文里 ``zipday`` 是**美东交易日**、``tminutes`` 是**北京时间分钟数**，
+        直拼出的 ``datetime`` 会把同一交易日的下午半场（北京 00:00~04:00）排到
+        上午半场（北京 21:30~23:59）**之前** —— 单日 390 根全部错位、首末颠倒。
+        这里把凌晨段（北京 hour < 12）的日期 +1 天，得到严格单调的北京时间序列。
+        """
+        if self.market in _US_EX_MARKETS and self.hour < _US_DAY_SPLIT_HOUR:
+            d = date(self.year, self.month, self.day) + timedelta(days=1)
+            self.year, self.month, self.day = d.year, d.month, d.day
+
+    @property
+    def is_us(self) -> bool:
+        """是否美股（EX 通道 ``US_STOCK``）。"""
+        return self.market in _US_EX_MARKETS
+
     @property
     def datetime(self) -> datetime:
+        """bar 的时刻（北京时间）。"""
         return datetime(self.year, self.month, self.day, self.hour, self.minute)
+
+    @property
+    def trading_date(self) -> str:
+        """该 bar 归属的交易日，``YYYY-MM-DD``。
+
+        美股：``datetime`` 已还原为北京时间，凌晨段（北京 hour < 12）属于**前一天**
+        的美东交易日，故回退一天；A股/港股/期货的交易日即自然日。按交易日聚合
+        （如分钟线合成日线）时应当用本字段，而不是 ``datetime.date()``。
+        """
+        if self.is_us and self.hour < _US_DAY_SPLIT_HOUR:
+            return (date(self.year, self.month, self.day) - timedelta(days=1)).isoformat()
+        return f"{self.year:04d}-{self.month:02d}-{self.day:02d}"
 
 
 @dataclass(slots=True)
