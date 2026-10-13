@@ -2,20 +2,17 @@
 from __future__ import annotations
 
 import struct
-from collections import Counter
-from datetime import date, datetime
 
 import pytest
 
-from pytdxdata.models import Adjust, KlinePeriod, SecurityBar
+from pytdxdata.protocol.frame import FrameHeader, decompress_body, parse_header
+from pytdxdata.protocol.price import get_price, put_price, decode_ohlc_diffs
+from pytdxdata.protocol.volume import decode_volume
 from pytdxdata.protocol.commands.ex_proto import GetExInstrumentBarsCmd
 from pytdxdata.protocol.commands.kline import GetSecurityBarsCmd
-from pytdxdata.protocol.commands.mac import MacKlineCmd
 from pytdxdata.protocol.commands.minute import GetHistoryMinuteTimeDataCmd
 from pytdxdata.protocol.commands.transaction import MacTransactionCmd
-from pytdxdata.protocol.frame import FrameHeader, decompress_body, parse_header
-from pytdxdata.protocol.price import decode_ohlc_diffs, get_price, put_price
-from pytdxdata.protocol.volume import decode_volume
+
 
 # ---------- 变长有符号整数 ----------
 
@@ -179,110 +176,3 @@ def test_mac_transaction_parse():
     assert recs[0].trade_count == 3
     assert recs[0].bs_flag == 1
     assert recs[1].trade_count == 1
-
-
-# ---------- 跨时区时间戳归一化（美股 EX 通道） ----------
-#
-# 通达信 EX 通道对美股返回的时间戳把两个时区拼在一起：日期字段是**美东交易日**、
-# 时分字段是**北京时间**。直拼出的 datetime 会把同一交易日的下午半场（北京
-# 00:00~04:00）排到上午半场（北京 21:30~23:59）之前，单日 390 根全部错位。
-
-def _bar(market: int, y: int, mo: int, d: int, h: int, mi: int) -> SecurityBar:
-    return SecurityBar(market=market, code="X", open=1.0, high=1.0, low=1.0,
-                       close=1.0, vol=1.0, amount=1.0,
-                       year=y, month=mo, day=d, hour=h, minute=mi)
-
-
-def test_us_evening_segment_keeps_date():
-    # 北京 21:31 ~ 23:59 与美东交易日属同一自然日，日期不动
-    b = _bar(74, 2026, 10, 12, 21, 31)
-    assert b.datetime == datetime(2026, 10, 12, 21, 31)
-    assert b.trading_date == "2026-10-12"
-
-
-def test_us_midnight_segment_rolls_to_next_day():
-    # 北京次日 00:00 ~ 04:00 实际是美东 12:00~16:00，日期要 +1 天
-    b = _bar(74, 2026, 10, 12, 4, 0)
-    assert b.datetime == datetime(2026, 10, 13, 4, 0)
-    assert (b.hour, b.minute) == (4, 0)          # 时分不参与归一化
-    assert b.trading_date == "2026-10-12"        # 仍归属美东 10-12 交易日
-
-
-def test_us_split_hour_boundary():
-    assert _bar(74, 2026, 10, 12, 11, 59).day == 13
-    assert _bar(74, 2026, 10, 12, 12, 0).day == 12
-
-
-def test_us_month_and_year_rollover():
-    assert _bar(74, 2026, 10, 31, 4, 0).datetime == datetime(2026, 11, 1, 4, 0)
-    assert _bar(74, 2026, 12, 31, 4, 0).datetime == datetime(2027, 1, 1, 4, 0)
-
-
-def test_cn_and_hk_bars_untouched():
-    cn = _bar(1, 2026, 10, 12, 9, 31)            # A股/标准通道
-    assert (cn.year, cn.month, cn.day) == (2026, 10, 12)
-    assert cn.trading_date == "2026-10-12"
-    hk = _bar(31, 2026, 10, 12, 4, 0)            # 港股同为 UTC+8，凌晨段不应 +1
-    assert (hk.year, hk.month, hk.day) == (2026, 10, 12)
-    assert hk.trading_date == "2026-10-12"
-
-
-def test_us_full_session_is_monotonic_and_single_trading_day():
-    # 实测口径：北京 21:31~23:59（149 根）+ 次日 00:00~04:00（241 根）= 390 根
-    mins = list(range(21 * 60 + 31, 24 * 60)) + list(range(4 * 60 + 1))
-    assert len(mins) == 390
-    bars = [_bar(74, 2026, 10, 12, m // 60, m % 60) for m in mins]
-    bars.sort(key=lambda b: b.datetime)
-    dts = [b.datetime for b in bars]
-    assert dts == sorted(dts)                    # 归一化后严格单调
-    assert dts[0] == datetime(2026, 10, 12, 21, 31)
-    assert dts[-1] == datetime(2026, 10, 13, 4, 0)
-    # 全部归属于同一个美东交易日
-    assert {b.trading_date for b in bars} == {"2026-10-12"}
-    # 但横跨两个北京自然日（这正是不能用 datetime.date() 聚合的原因）
-    by_day = Counter(b.datetime.date() for b in bars)
-    assert by_day[date(2026, 10, 12)] == 149
-    assert by_day[date(2026, 10, 13)] == 241
-
-
-# ---------- MAC 通道 K线（0x122E）同样归一化 ----------
-
-def _mac_bars_body(records: list[tuple[int, int]]) -> bytes:
-    """构造 0x122E 响应体：33B头(count@24) + 每条36B(4B ymd + 4B time秒 + 7float)。"""
-    body = bytearray(33 + len(records) * 36)
-    struct.pack_into("<HBHI", body, 24, 7, 1, len(records), 0)
-    for i, (ymd, tsec) in enumerate(records):
-        struct.pack_into("<II7f", body, 33 + i * 36,
-                         ymd, tsec, 10.0, 10.5, 9.5, 10.2, 0.0, 1000.0, 0.0)
-    return bytes(body)
-
-
-def test_mac_kline_us_bar_normalized():
-    # _probe_bar（日期区间二分依赖它）对美股走的就是这条命令
-    cmd = MacKlineCmd(74, "AAPL", KlinePeriod.MIN_1, Adjust.NONE, 0, 5)
-    bars = cmd.parse_response(_mac_bars_body([(20261012, 4 * 3600)]))  # 北京 04:00
-    assert len(bars) == 1
-    assert bars[0].datetime == datetime(2026, 10, 13, 4, 0)
-    assert bars[0].trading_date == "2026-10-12"
-
-
-def test_mac_kline_hk_bar_untouched():
-    cmd = MacKlineCmd(31, "00700", KlinePeriod.MIN_1, Adjust.NONE, 0, 5)
-    bars = cmd.parse_response(_mac_bars_body([(20260729, 13 * 3600 + 40 * 60)]))
-    assert (bars[0].datetime) == datetime(2026, 7, 29, 13, 40)
-    assert bars[0].trading_date == "2026-07-29"
-
-
-# ---------- 排序：EX 返回顺序按时间正序（切片取「最新 N 根」依赖它） ----------
-
-def test_finish_bars_sorts_us_session_chronologically():
-    from pytdxdata.api import TdxData
-    from pytdxdata.symbols import parse_symbols
-
-    sym = parse_symbols("usAAPL")[0]
-    # 故意按错误的顺序给（凌晨段在前）
-    out = TdxData._finish_bars([_bar(74, 2026, 10, 12, 4, 0),
-                                _bar(74, 2026, 10, 12, 21, 31)], sym)
-    assert [b.datetime for b in out] == [datetime(2026, 10, 12, 21, 31),
-                                         datetime(2026, 10, 13, 4, 0)]
-    assert {b.symbol for b in out} == {"usAAPL"}

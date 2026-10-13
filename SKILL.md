@@ -164,7 +164,6 @@ await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 
 - **数据有 15 分钟延时**（通达信公开服务器特性）。要实时数据请用券商行情。
 - **复权 K 线与 1 分钟 K 线走 MAC 通道**。`get_bars(..., adjust=Adjust.QFQ)` 自动切换。
-- **K 线时间戳统一为北京时间**（v0.6.2 起）。美股原始报文里日期是美东交易日、时分是北京时间（两个时区拼在一起），库已自动归一化，`bar.datetime` 可直接排序 / 比较 / 过滤。但**美股一个交易日横跨两个北京自然日**，按交易日聚合（分钟线合成日线、日内统计）必须用 `bar.trading_date`。
 - **`count` 很大时会自动多连接并发分页**，无需手动翻页。但标准通道 K 线 `count < 100` 部分服务器会返回空——内部已强制 `min_page=100` 规避。
 - **`get_quotes` 一次 >80 只自动切批**；走 MAC 字段位通道（`fields=`）时上限为 80 只/次。
 - **历史逐笔没有笔数字段**，只有当日逐笔的 `trade_count` 有效。
@@ -184,7 +183,6 @@ await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 | 用 `get_block_info` 又自己拆二进制 | 白写解析器 | 用 `get_block_parsed`，已经解析好了 |
 | 循环里逐个 `await get_bars` | 慢 | 用列表传多个标的，自动并发 |
 | 港股/美股五档 bid/ask | 没有（协议不支持） | `fields` 字段位通道有 name 但无五档 |
-| 美股分钟线用 `datetime.date()` 分组做日聚合 | 一个交易日被拆成两天（美股跨北京零点） | 用 `bar.trading_date`；`bar.datetime` 是归一化后的北京时间 |
 | 依赖实时性做信号 | 数据是 15 分钟前的 | 换券商实时源 |
 | 手动改包内 `servers.json` / 写死 IP | 容器只读、升级被覆盖、快节点捞不回来 | 日常靠内置的**当日测速缓存**自动选路；要强制指定就用 `PYPYTDX_DATA_{STANDARD,MAC,EX}_HOSTS` 环境变量 |
 

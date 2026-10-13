@@ -62,22 +62,6 @@ from pytdxdata.models import BoardInfo, MemberQuote, AuctionItem, CapitalFlow
     | 结构 | 具名属性（`zongguben`、`jingzichan` ...） | `fields: list[float]`，原始字段数组 |
     | 单位 | 万元 / 万股 | 原始 float，需自行按字段语义换算 |
 
-!!! tip "`SecurityBar.datetime` 的时间戳口径（v0.6.2 起）"
-    时间统一为**北京时间**。A股 / 港股 / 期货的原始时间戳即为北京时间；美股的原始报文
-    混用了「美东交易日日期」与「北京时间时分」两个时区，库在构造时已自动归一化
-    （凌晨段日期 +1 天），因此 `bar.datetime` 可直接排序 / 比较 / 过滤。
-
-    但要注意**美股一个交易日横跨两个北京自然日**，按交易日聚合请用 `bar.trading_date`：
-
-    ```python
-    bars = await td.get_bars("usAAPL", KlinePeriod.MIN_1, count=390)
-    bars[0].datetime        # 2026-10-12 21:31:00（北京时间）
-    bars[-1].datetime       # 2026-10-13 04:00:00（次日）
-    bars[0].trading_date    # "2026-10-12" —— 归属的美东交易日
-    ```
-
-    `bar.is_us` 可判定是否美股。详见 [常见问题 → 美股分钟 K 线](../faq.md)。
-
 ## 完整字段定义
 
 以下由 `mkdocstrings` 从源码实时渲染（**以源码为准**）：

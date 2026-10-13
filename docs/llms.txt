@@ -93,10 +93,6 @@ tdx financial gpcw20260331.zip --limit 5
 - **`KlinePeriod.MIN_1` 走 MAC 通道并单连接串行分页**，这是刻意设计：并发分页在多服务器
   历史深度不一致时会产生非确定性数据空洞。不要试图"优化"成并发。
 - **复权 K 线走 MAC 通道**，标准通道不提供复权数据。
-- **K 线 `datetime` 统一为北京时间**（v0.6.2 起）。美股原始报文的日期分量是美东交易日、
-  时分分量是北京时间，库已自动归一化，`bar.datetime` 可直接排序 / 比较 / 过滤。
-  但**美股一个交易日横跨两个北京自然日**：按交易日聚合（分钟线合成日线、日内统计）
-  用 `bar.trading_date`，不要用 `bar.datetime.date()`。`bar.is_us` 判定美股。
 - **标准通道部分服务器在 `count < 100` 时返回空**，分页器已强制 `min_page=100` 规避。
 - **本地 Windows 上 `asyncio.new_event_loop()` 可能永久挂起**，根因是回环 `socket.socketpair()`
   被本地代理/安全软件拦截。异步测试请在 Linux/WSL 运行。
