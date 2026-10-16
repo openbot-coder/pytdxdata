@@ -1,6 +1,6 @@
 {
   "version": "2026-10-16",
-  "note": "离线探针复测(2026-10-16 12:45): 可达=27/33, 入池fast_pool=10台",
+  "note": "离线探针复测(2026-10-16 13:46): 可达=30/36, 入池fast_pool=10台",
   "servers": [
     {
       "ip": "139.9.52.158",
@@ -11,14 +11,14 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.147,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.172,
+      "checked_at": "2026-10-16 13:46:17",
       "source": "probe-2026-08-12",
       "fast_pool": true,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "standard": 0.147,
-        "mac": 0.157
+        "standard": 0.172,
+        "mac": 0.183
       }
     },
     {
@@ -30,14 +30,14 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.271,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.298,
+      "checked_at": "2026-10-16 13:46:18",
       "source": "probe-2026-08-12",
-      "fast_pool": false,
+      "fast_pool": true,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "standard": 0.277,
-        "mac": 0.271
+        "standard": 0.316,
+        "mac": 0.298
       }
     },
     {
@@ -48,13 +48,13 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.138,
-      "checked_at": "2026-10-16 12:45:38",
+      "latency": 0.236,
+      "checked_at": "2026-10-16 13:46:23",
       "source": "probe-2026-08-12",
       "fast_pool": true,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "mac": 0.138
+        "mac": 0.236
       }
     },
     {
@@ -65,13 +65,13 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.152,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.213,
+      "checked_at": "2026-10-16 13:46:17",
       "source": "probe-2026-08-12",
       "fast_pool": true,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "mac": 0.152
+        "mac": 0.213
       }
     },
     {
@@ -84,15 +84,15 @@
       ],
       "handshake": "setup",
       "status": "ok",
-      "latency": 0.182,
-      "checked_at": "2026-10-16 12:45:29",
+      "latency": 0.316,
+      "checked_at": "2026-10-16 13:46:13",
       "source": "probe-2026-08-12",
-      "fast_pool": true,
+      "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "standard": 0.344,
-        "mac": 0.319,
-        "ex": 0.182
+        "standard": 0.316,
+        "mac": 0.329,
+        "ex": 0.539
       }
     },
     {
@@ -104,7 +104,7 @@
       "handshake": null,
       "status": "fail",
       "latency": null,
-      "checked_at": "2026-10-16 12:45:49",
+      "checked_at": "2026-10-16 13:46:34",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
@@ -118,13 +118,13 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.295,
-      "checked_at": "2026-10-16 12:45:39",
+      "latency": 0.682,
+      "checked_at": "2026-10-16 13:46:24",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "mac": 0.295
+        "mac": 0.682
       }
     },
     {
@@ -136,7 +136,7 @@
       "handshake": null,
       "status": "fail",
       "latency": null,
-      "checked_at": "2026-10-16 12:45:49",
+      "checked_at": "2026-10-16 13:46:34",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
@@ -150,13 +150,13 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.294,
-      "checked_at": "2026-10-16 12:45:39",
+      "latency": 0.607,
+      "checked_at": "2026-10-16 13:46:23",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "mac": 0.294
+        "mac": 0.607
       }
     },
     {
@@ -167,13 +167,13 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.261,
-      "checked_at": "2026-10-16 12:45:39",
+      "latency": 1.264,
+      "checked_at": "2026-10-16 13:46:24",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "mac": 0.261
+        "mac": 1.264
       }
     },
     {
@@ -185,7 +185,7 @@
       "handshake": null,
       "status": "fail",
       "latency": null,
-      "checked_at": "2026-10-16 12:45:49",
+      "checked_at": "2026-10-16 13:46:34",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
@@ -200,7 +200,7 @@
       "handshake": null,
       "status": "fail",
       "latency": null,
-      "checked_at": "2026-10-16 12:45:49",
+      "checked_at": "2026-10-16 13:46:34",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
@@ -214,13 +214,13 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.258,
-      "checked_at": "2026-10-16 12:45:39",
+      "latency": 0.612,
+      "checked_at": "2026-10-16 13:46:23",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "mac": 0.258
+        "mac": 0.612
       }
     },
     {
@@ -231,13 +231,13 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.218,
-      "checked_at": "2026-10-16 12:45:39",
+      "latency": 0.613,
+      "checked_at": "2026-10-16 13:46:23",
       "source": "probe-2026-08-12",
-      "fast_pool": true,
+      "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "mac": 0.218
+        "mac": 0.613
       }
     },
     {
@@ -248,13 +248,13 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.263,
-      "checked_at": "2026-10-16 12:45:39",
+      "latency": 0.624,
+      "checked_at": "2026-10-16 13:46:23",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "mac": 0.263
+        "mac": 0.624
       }
     },
     {
@@ -265,13 +265,13 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.262,
-      "checked_at": "2026-10-16 12:45:39",
+      "latency": 0.592,
+      "checked_at": "2026-10-16 13:46:23",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "mac": 0.262
+        "mac": 0.592
       }
     },
     {
@@ -282,13 +282,13 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.25,
-      "checked_at": "2026-10-16 12:45:39",
+      "latency": 0.624,
+      "checked_at": "2026-10-16 13:46:23",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "mac": 0.25
+        "mac": 0.624
       }
     },
     {
@@ -300,14 +300,14 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.294,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.306,
+      "checked_at": "2026-10-16 13:46:18",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "standard": 0.306,
-        "mac": 0.294
+        "standard": 0.352,
+        "mac": 0.306
       }
     },
     {
@@ -319,7 +319,7 @@
       "handshake": null,
       "status": "fail",
       "latency": null,
-      "checked_at": "2026-10-16 12:45:33",
+      "checked_at": "2026-10-16 13:46:18",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
@@ -334,14 +334,14 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.321,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.307,
+      "checked_at": "2026-10-16 13:46:18",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "standard": 0.332,
-        "mac": 0.321
+        "standard": 0.35,
+        "mac": 0.307
       }
     },
     {
@@ -353,14 +353,14 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.313,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.395,
+      "checked_at": "2026-10-16 13:46:18",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "standard": 0.338,
-        "mac": 0.313
+        "standard": 0.395,
+        "mac": 0.675
       }
     },
     {
@@ -372,14 +372,14 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.287,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.345,
+      "checked_at": "2026-10-16 13:46:18",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "standard": 0.306,
-        "mac": 0.287
+        "standard": 0.345,
+        "mac": 0.726
       }
     },
     {
@@ -391,14 +391,14 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.333,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.326,
+      "checked_at": "2026-10-16 13:46:18",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "standard": 0.372,
-        "mac": 0.333
+        "standard": 0.326,
+        "mac": 0.743
       }
     },
     {
@@ -410,14 +410,14 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.294,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.394,
+      "checked_at": "2026-10-16 13:46:18",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "standard": 0.298,
-        "mac": 0.294
+        "standard": 0.394,
+        "mac": 0.78
       }
     },
     {
@@ -429,14 +429,14 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.303,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.327,
+      "checked_at": "2026-10-16 13:46:18",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "standard": 0.303,
-        "mac": 0.355
+        "standard": 0.327,
+        "mac": 0.328
       }
     },
     {
@@ -448,14 +448,14 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.309,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.348,
+      "checked_at": "2026-10-16 13:46:18",
       "source": "probe-2026-08-12",
       "fast_pool": false,
       "checked_date": "2026-10-16",
       "_per_proto": {
-        "standard": 0.341,
-        "mac": 0.309
+        "standard": 0.348,
+        "mac": 0.74
       }
     },
     {
@@ -467,7 +467,7 @@
       "handshake": null,
       "status": "fail",
       "latency": null,
-      "checked_at": "2026-10-16 12:45:53",
+      "checked_at": "2026-10-16 13:46:37",
       "source": "probe-2026-08-12",
       "checked_date": "2026-10-16",
       "fast_pool": false,
@@ -481,13 +481,13 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.209,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.726,
+      "checked_at": "2026-10-16 13:46:18",
       "source": "probe-2026-08-12",
       "checked_date": "2026-10-16",
-      "fast_pool": true,
+      "fast_pool": false,
       "_per_proto": {
-        "mac": 0.209
+        "mac": 0.726
       }
     },
     {
@@ -498,13 +498,13 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.238,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.624,
+      "checked_at": "2026-10-16 13:46:18",
       "source": "probe-2026-08-12",
       "checked_date": "2026-10-16",
-      "fast_pool": true,
+      "fast_pool": false,
       "_per_proto": {
-        "mac": 0.238
+        "mac": 0.624
       }
     },
     {
@@ -515,13 +515,13 @@
       ],
       "handshake": null,
       "status": "ok",
-      "latency": 0.252,
-      "checked_at": "2026-10-16 12:45:33",
+      "latency": 0.56,
+      "checked_at": "2026-10-16 13:46:30",
       "source": "probe-2026-08-12",
       "checked_date": "2026-10-16",
       "fast_pool": false,
       "_per_proto": {
-        "mac": 0.252
+        "mac": 0.56
       }
     },
     {
@@ -532,13 +532,13 @@
       ],
       "handshake": "login",
       "status": "ok",
-      "latency": 0.106,
-      "checked_at": "2026-10-16 12:45:37",
+      "latency": 0.097,
+      "checked_at": "2026-10-16 13:46:21",
       "source": "probe-2026-08-12",
       "checked_date": "2026-10-16",
       "fast_pool": true,
       "_per_proto": {
-        "ex": 0.106
+        "ex": 0.097
       }
     },
     {
@@ -549,13 +549,13 @@
       ],
       "handshake": "login",
       "status": "ok",
-      "latency": 0.083,
-      "checked_at": "2026-10-16 12:45:37",
+      "latency": 0.097,
+      "checked_at": "2026-10-16 13:46:21",
       "source": "probe-2026-08-12",
       "checked_date": "2026-10-16",
       "fast_pool": true,
       "_per_proto": {
-        "ex": 0.083
+        "ex": 0.097
       }
     },
     {
@@ -566,13 +566,64 @@
       ],
       "handshake": "setup",
       "status": "ok",
-      "latency": 0.09,
-      "checked_at": "2026-10-16 12:45:37",
+      "latency": 0.103,
+      "checked_at": "2026-10-16 13:46:21",
       "source": "probe-2026-08-12",
       "checked_date": "2026-10-16",
       "fast_pool": true,
       "_per_proto": {
-        "ex": 0.09
+        "ex": 0.103
+      }
+    },
+    {
+      "ip": "112.74.214.43",
+      "name": "扩展市场深圳双线1",
+      "protocols": [
+        "ex"
+      ],
+      "handshake": "login",
+      "status": "ok",
+      "latency": 0.095,
+      "checked_at": "2026-10-16 13:46:21",
+      "source": "connect.cfg",
+      "fast_pool": true,
+      "checked_date": "2026-10-16",
+      "_per_proto": {
+        "ex": 0.095
+      }
+    },
+    {
+      "ip": "120.25.218.6",
+      "name": "扩展市场深圳双线2",
+      "protocols": [
+        "ex"
+      ],
+      "handshake": "login",
+      "status": "ok",
+      "latency": 0.101,
+      "checked_at": "2026-10-16 13:46:21",
+      "source": "connect.cfg",
+      "fast_pool": true,
+      "checked_date": "2026-10-16",
+      "_per_proto": {
+        "ex": 0.101
+      }
+    },
+    {
+      "ip": "47.102.108.214",
+      "name": "扩展市场上海双线2",
+      "protocols": [
+        "ex"
+      ],
+      "handshake": "login",
+      "status": "ok",
+      "latency": 0.149,
+      "checked_at": "2026-10-16 13:46:22",
+      "source": "connect.cfg",
+      "fast_pool": true,
+      "checked_date": "2026-10-16",
+      "_per_proto": {
+        "ex": 0.149
       }
     }
   ],
