@@ -233,11 +233,13 @@ class TdxData:
         pool_max: int = 12,
         mac_pool_cap: int = 4,
         std_pool_cap: int = 4,
+        ex_pool_cap: int = 2,
     ) -> None:
         self.port = port
         self.timeout = timeout
         self.default_adjust = default_adjust
         self.mac_pool_cap = mac_pool_cap
+        self.ex_pool_cap = ex_pool_cap
         self._std_servers = list(standard_servers or get_standard_hosts())
         self._mac_servers = list(mac_servers or get_mac_hosts())
         self._ex_servers = list(ex_servers or get_ex_hosts())
@@ -262,8 +264,11 @@ class TdxData:
             probe_factory=lambda: MacKlineCmd(1, "600000", KlinePeriod.DAY, Adjust.NONE, 0, 100),
         )
         # EX扩展市场池（港股/期货/美股，端口7727；MAC EX login + pytdx EX setup 混合）
+        # 单服务器场景（测速缓存收缩后仅 1 台）下，有效并发 = 服务器数 × ex_pool_cap，
+        # 默认 cap=2 保证至少 2 并发；acquire 有 Condition 背压等待，不再快速失败。
         self._ex_pool = ExPool(self._ex_servers, timeout=timeout,
                                 min_size=min(pool_min, 2), max_size=min(pool_max, 6),
+                                per_server_cap=ex_pool_cap,
                                 handshake_map=EX_HANDSHAKES)
         disk = None
         if self._cache_dir is not None:
