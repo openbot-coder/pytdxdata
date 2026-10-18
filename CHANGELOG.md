@@ -2,6 +2,11 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.3] - 2026-10-18
+
+- fix(pool): ExPool acquire 背压等待（Condition 排队，默认 30s 超时）替代 3x0.05s 快速失败；超时异常带池状态
+- feat(api): 新增 ex_pool_cap 参数（默认 2），单 EX 服务器场景不再静默退化为 1 并发（fixes #1）
+
 ## [0.6.2] - 2026-10-13
 
 ### 修复
