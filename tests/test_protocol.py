@@ -12,6 +12,7 @@ from pytdxdata.protocol.commands.ex_proto import GetExInstrumentBarsCmd
 from pytdxdata.protocol.commands.kline import GetSecurityBarsCmd
 from pytdxdata.protocol.commands.mac import MacKlineCmd
 from pytdxdata.protocol.commands.minute import GetHistoryMinuteTimeDataCmd
+from pytdxdata.protocol.commands.quotes import price_decimal_digits
 from pytdxdata.protocol.commands.transaction import MacTransactionCmd
 from pytdxdata.protocol.frame import FrameHeader, decompress_body, parse_header
 from pytdxdata.protocol.price import decode_ohlc_diffs, get_price, put_price
@@ -181,6 +182,30 @@ def test_mac_transaction_parse():
     assert recs[1].trade_count == 1
 
 
+def test_mac_transaction_parse_negative_trade_count_auction():
+    """集合竞价段 trade_count 是有符号 int32，负数不能被读成 42 亿（BUG 回归）。
+
+    实测（2026-10-21，sh600000 09:15:03）：18 字节为
+      17820000 0ad71b41 d9000000 96fcffff 0800
+    最后四字节前的 96fcffff = int32 -874，旧解析按 uint32 得 4294966422。
+    """
+    body = bytearray(39 + 2 * 18)
+    struct.pack_into("<H", body, 29, 2)
+    # 第1条：集合竞价，trade_count = -874
+    struct.pack_into("<IfIiH", body, 39, 33303, 9.74, 217, -874, 8)
+    # 第2条：正常交易，trade_count = 3
+    struct.pack_into("<IfIiH", body, 39 + 18, 34200, 9.75, 100, 3, 1)
+
+    cmd = MacTransactionCmd(1, "600000", 20261021, 0, 100)
+    recs = cmd.parse_response(bytes(body))
+    assert len(recs) == 2
+    assert recs[0].trade_count == -874, "负值必须保留符号，不能变成 4294966422"
+    assert recs[0].bs_flag == 8
+    assert recs[1].trade_count == 3
+    # 正常交易段的量级不受影响
+    assert max(r.trade_count for r in recs) == 3
+
+
 # ---------- 跨时区时间戳归一化（美股 EX 通道） ----------
 #
 # 通达信 EX 通道对美股返回的时间戳把两个时区拼在一起：日期字段是**美东交易日**、
@@ -286,3 +311,37 @@ def test_finish_bars_sorts_us_session_chronologically():
     assert [b.datetime for b in out] == [datetime(2026, 10, 12, 21, 31),
                                          datetime(2026, 10, 13, 4, 0)]
     assert {b.symbol for b in out} == {"usAAPL"}
+
+# ---------- 报价小数位：沪市指数必须 2 位（回归：曾整体少 10 倍） ----------
+
+@pytest.mark.parametrize("market,code,expect", [
+    # 沪市指数：回归 bug —— 曾被判 3 位，导致价格少 10 倍
+    (1, "000001", 2),   # 上证指数
+    (1, "000016", 2),   # 上证50
+    (1, "000300", 2),   # 沪深300
+    (1, "000688", 2),   # 科创50
+    (1, "880001", 2),   # 板块指数（8 开头，曾被判 3 位）
+    (1, "880305", 2),
+    # 沪市 ETF/基金：仍是 3 位
+    (1, "510300", 3),
+    (1, "588000", 3),
+    (1, "511010", 3),
+    (1, "501018", 3),
+    # 沪市股票：2 位
+    (1, "600000", 2),
+    (1, "601398", 2),
+    (1, "688111", 2),   # 科创板
+    # 深市
+    (0, "399001", 2),   # 深证成指
+    (0, "399006", 2),   # 创业板指
+    (0, "000001", 2),   # 平安银行（不是指数！）
+    (0, "300750", 2),
+    (0, "159915", 3),   # 深市 ETF
+    (0, "128035", 3),   # 深市转债
+])
+def test_price_decimal_digits(market, code, expect):
+    assert price_decimal_digits(market, code) == expect
+
+
+def test_price_decimal_digits_strips_nul():
+    assert price_decimal_digits(1, "000016\x00\x00") == 2

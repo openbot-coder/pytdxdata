@@ -48,7 +48,7 @@ asyncio.run(main())
 - **K 线**：`get_bars`（自动并发分页、支持复权与日期区间、多标的并发）
 - **技术指标**：`get_indicators`（K线 + MACD/KDJ/RSI/BOLL/MA/EMA）
 - **报价**：`get_quotes`（五档，>80 只自动切批）、`get_snapshot`（个股特征）、`get_market_stat`
-- **逐笔 / 分时**：`get_ticks`（含 `trade_count`，支持历史日期）、`get_minutes`（`sampling=True` 取缩略采样）
+- **逐笔 / 分时**：`get_ticks`（含 `trade_count`，支持历史日期，返回按时间升序；`vol`/`trade_count` 为约 3 秒切片增量而非累计；已剔除 `bs_flag=8` 竞价委托；**指数**的 `vol` 是百元、`trade_count` 是均价×1000）、`get_minutes`（`sampling=True` 取缩略采样）
 - **财务 / 除权**：`get_finance`（最新快照）、`get_xdxr`、`get_price_limits`（本地计算涨跌停）
 - **F10**：`get_f10`（公司资料目录 + 正文）
 - **板块**：`get_boards`、`get_board_members`、`get_board_of`、`get_board_summary`、

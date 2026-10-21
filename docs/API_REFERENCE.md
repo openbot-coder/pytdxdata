@@ -69,7 +69,7 @@ from pytdxdata import (
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
-| `get_ticks(symbols, *, date=None, start=0, count=None, concurrency=6)` | `list[TransactionRecord]` | 跨市场逐笔成交 |
+| `get_ticks(symbols, *, date=None, start=0, count=None, concurrency=6)` | `list[TransactionRecord]` | 跨市场逐笔成交。返回按时间升序；`start` **从最新一笔往回数**；`vol`/`trade_count` 为约 3 秒切片的增量值（非累计）。**已剔除 `bs_flag=8` 竞价委托**（非成交，`vol` 为累计撮合量）。**指数**：`vol` 单位是百元（成交额/100）、`trade_count` 是均价×1000，均非股票语义 |
 | `get_minutes(symbols, *, date=None, sampling=False, concurrency=6)` | `list[MinuteBar]` | 跨市场分时（sampling=True 取缩略采样：A股由 0x122D 派生，扩展市场 0x254D） |
 
 #### 公司信息/文件/板块

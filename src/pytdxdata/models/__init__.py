@@ -228,14 +228,34 @@ class SecurityInfo:
 
 @dataclass(slots=True)
 class TransactionRecord:
-    """逐笔成交（跨市场统一模型；A股 MAC 通道含 trade_count=成交笔数）"""
+    """逐笔成交（跨市场统一模型；A股 MAC 通道含 trade_count=成交笔数）。
+
+    注意（实测 2026-10-21）：
+
+    - 服务端是按**约 3 秒聚合**返回的切片，不是交易所原始逐笔成交。
+    - ``vol`` / ``trade_count`` 都是**该切片自身的增量**，不是当日累计值。
+    - ``trade_count`` 为**有符号**值：集合竞价段（``bs_flag=8``）会是负数
+      （实测 sh600000 09:15 段为 -874），不要对全表直接求 max/mean。
+    - 返回列表已按时间升序，但同秒多条时顺序不保证。
+    - ``bs_flag=8`` 的**竞价委托记录已被 ``get_ticks()`` 过滤掉**，不会出现在结果里。
+
+    **指数语义完全不同**（``is_cn_index`` 为真时，如 ``sh000016``）：
+
+    - ``vol`` 单位是**百元**（= 成交额 / 100），不是「手」。实测
+      ``快照amount / Σtick.vol = 100.0002``，且 ``Σtick.vol`` 与分时 Σvol **逐位相等**。
+      想和成分股成交量对比必须先换算，直接比会得到 ~26 倍的假比例。
+    - ``trade_count`` **不是笔数**，而是**当时均价 × 1000**（实测 tc/1000 与分时
+      ``avg_price`` 的差 < 1.1）。指数没有「成交笔数」概念。
+    - ``bs_flag`` 语义不成立（实测返回 2，而模型只定义 0=卖 / 1=买）。
+    """
+
     market: int
     code: str
     time: str           # HH:MM:SS（扩展市场为 HH:MM）
     price: float
-    vol: float          # 手（MAC逐笔）
-    trade_count: int    # 成交笔数（MAC=逐笔记录字段；标准当日逐笔协议也有但需单独解析）
-    bs_flag: int        # 1=主动买 0=主动卖
+    vol: float          # 股票=手；指数=百元（成交额/100），见类注释
+    trade_count: int    # 股票=笔数增量；指数=均价×1000，见类注释
+    bs_flag: int        # 1=主动买 0=主动卖 2=中性 5=盘后固定价（指数语义不成立）
     symbol: str = ""
     fields: dict[str, float] = field(default_factory=dict)  # 扩展市场额外字段（增仓等）
 

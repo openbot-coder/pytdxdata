@@ -27,6 +27,7 @@ class PageSpec:
     ordered: bool = True              # 按 start 升序拼接
     min_page: int = 100               # 规避标准K线 count<100 空响应坑
     start_offset: int = 0             # 起始偏移（从该偏移开始分页，避免拉取历史全量）
+    newest_first: bool = False        # 服务端 start 从最新往回数（0x122F 逐笔即如此）
 
 
 @dataclass(slots=True)
@@ -94,7 +95,7 @@ class Paginator:
                 if s.pc is not None:
                     pc, s.pc = s.pc, None
                     await self.pool.release(pc)
-        return self._assemble(out, spec.ordered)
+        return self._assemble(out, spec.ordered, spec.newest_first)
 
     def _plan_starts(self, spec: PageSpec) -> list[tuple[int, int]]:
         """切页：返回 [(start, count), ...]。"""
@@ -158,9 +159,12 @@ class Paginator:
                     return None, False
         return None, False
 
-    def _assemble(self, results: list[PageResult], ordered: bool) -> list[Any]:
+    def _assemble(self, results: list[PageResult], ordered: bool,
+                  newest_first: bool = False) -> list[Any]:
+        # newest_first=True：start=0 是最新一页，start 越大越旧 → 反向拼才对得上时间序。
+        # 单页内部服务端已按时间升序，所以只翻页序，不翻页内元素。
         if ordered:
-            results.sort(key=lambda r: r.start)
+            results.sort(key=lambda r: r.start, reverse=newest_first)
         out: list[Any] = []
         for r in results:
             out.extend(r.items)
