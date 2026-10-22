@@ -30,6 +30,7 @@ from datetime import date as _date, datetime
 from pathlib import Path
 from typing import Sequence
 
+from . import decimal_sync
 from .cache.disk import DiskCache
 from .cache.key import CacheKey
 from .cache.manager import CacheManager
@@ -285,6 +286,7 @@ class TdxData:
         self._paginator_std = Paginator(self._std_pool)
         self._paginator_mac = Paginator(self._mac_pool)
         self._started = False
+        self._decimal_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         await self._std_pool.start()
@@ -292,8 +294,13 @@ class TdxData:
         await self._ex_pool.start()
         await self._cache.start()
         self._started = True
+        # 权威价格小数位表：当日缓存命中则同步装表（无网络），否则挂后台同步。
+        # 不阻塞 start()，失败静默退回静态前缀规则。
+        self._decimal_task = decimal_sync.schedule(self)
 
     async def close(self) -> None:
+        await decimal_sync.cancel(self._decimal_task)
+        self._decimal_task = None
         await self._std_pool.close()
         await self._mac_pool.close()
         await self._ex_pool.close()
@@ -330,6 +337,39 @@ class TdxData:
             else:
                 out.extend(await self._universe_cn(mkt))
         return out
+
+    async def sync_decimal_points(self, markets: Sequence[str] = ("sh", "sz")
+                                  ) -> dict[str, int]:
+        """从证券清单同步**权威价格小数位表**，返回统计。
+
+        报价接口返回的是整数，真实价格 = ``整数 / 10**小数位``。小数位不随报价下发，
+        但证券清单接口自带权威值 ``SecurityInfo.decimal_point`` —— 本方法把它灌进
+        :func:`~pytdxdata.protocol.commands.quotes.price_decimal_digits` 使用的运行时表，
+        从此价格标度不再依赖硬编码前缀规则（新增代码段也不会算错）。
+
+        ``start()`` 已自动处理：当日缓存命中就直接装表，否则挂后台同步，**不用手动调**。
+        这个方法用于「立刻要权威表」「排障时强制刷新」。
+
+        参数:
+            markets: 拉哪些市场，默认 ``("sh", "sz")``。证券清单走 ``get_universe``，
+                其本身已有缓存层，重复调用只花一次网络。
+
+        返回:
+            ``{"prefixes", "codes", "mixed_prefixes", "stock"}`` —— 已覆盖的三位前缀数、
+            例外代码数、出现混合小数位的前缀数、总条目数。
+            ``mixed_prefixes`` > 0 说明某段代码混用了不同小数位（已自动退化为逐代码查表）。
+
+        用法::
+
+            async with TdxData() as td:
+                print(await td.sync_decimal_points())   # {'prefixes': 300+, 'codes': 0, ...}
+                q = await td.get_quotes("sh019742")     # 110.228（4 位小数）
+        """
+        return await decimal_sync.refresh(self, tuple(markets))
+
+    async def decimal_point_status(self) -> dict:
+        """权威小数位表当前状态（``source`` / ``stock`` / ``syncing`` 等，排障用）。"""
+        return decimal_sync.status()
 
     async def _universe_cn(self, market: int) -> list[SecurityInfo]:
         key = CacheKey("list", market)

@@ -324,6 +324,27 @@ async def test_universe_and_quotes(td):
     assert len(qex) == 1
 
 
+async def test_decimal_point_sync(td, tmp_path, monkeypatch):
+    """权威小数位表同步：把证券清单的 decimal_point 灌进价格标度表。"""
+    for name in ("sync_decimal_points", "decimal_point_status"):
+        _use(name)
+    from pytdxdata.protocol.commands.quotes import clear_decimal_map, price_decimal_digits
+
+    # 缓存目录指向临时目录，避免把 mock 数据写进用户真实缓存
+    monkeypatch.setenv("PYPYTDX_DATA_CACHE_DIR", str(tmp_path))
+    before = price_decimal_digits(1, "600000")
+    try:
+        st = await td.sync_decimal_points()
+        assert set(st) >= {"prefixes", "codes", "mixed_prefixes", "stock"}
+        assert st["stock"] >= 0
+        status = await td.decimal_point_status()
+        assert isinstance(status, dict) and "source" in status
+    finally:
+        clear_decimal_map()
+    # 清空后回到静态规则，不受本用例污染
+    assert price_decimal_digits(1, "600000") == before
+
+
 async def test_snapshot_auction_flow(td):
     for name in ("get_snapshot", "get_auction", "get_capital_flow"):
         _use(name)
