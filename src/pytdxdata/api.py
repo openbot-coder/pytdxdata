@@ -23,7 +23,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 import warnings
+from collections.abc import Callable
 from datetime import date as _date, datetime
 from pathlib import Path
 from typing import Sequence
@@ -45,11 +47,13 @@ from .models import (
     FinancialFileInfo,
     FinancialRecord,
     IndicatorSet,
+    IndexTradeStats,
     IndustryInfo,
     KlinePeriod,
     Market,
     MemberQuote,
     MinuteBar,
+    MinuteTradeStat,
     SecurityBar,
     SecurityInfo,
     SecurityQuote,
@@ -1290,6 +1294,238 @@ class TdxData:
                            "change_pct": round((b.price / b.pre_close - 1) * 100, 2)})
         result.sort(key=lambda x: x["change_pct"], reverse=True)
         return result[:top_n]
+
+    # ================================================================== #
+    # 七之二、指数成分成交汇总（成分股逐笔 → 每分钟成交量 / 笔数）
+    # ================================================================== #
+
+    @staticmethod
+    def _index_pair(index: str) -> tuple[int, str]:
+        """解析指数标的 → ``(市场号, 6 位代码)``。
+
+        与 :func:`~pytdxdata.symbols.parse_symbol` 的关键区别：**裸 6 位数字
+        一律按指数语义解析**，不做「``000xxx`` → 深市股票」的推断 ——
+        在指数接口里 ``000001`` 是**上证指数**，不是平安银行 ``sz000001``。
+
+        判定规则（与通达信板块码一致）::
+
+            000xxx / 999xxx / 880xxx  -> 沪市（上证指数 / A股指数 / 板块指数）
+            399xxx                    -> 深市（深证成指 / 创业板指）
+            899xxx                    -> 北交所（北证50）
+
+        显式前缀 ``sh``/``sz``/``bj`` 优先，例如 ``sz399001``、``sh000300``。
+        """
+        s = str(index).strip().lower().replace(".", "").replace(":", "")
+        if not s:
+            raise ValueError("指数标的不能为空")
+        prefix_table = {"sh": 1, "sz": 0, "bj": 2}
+        if s[:2] in prefix_table:
+            code = s[2:]
+            if not (code.isdigit() and len(code) == 6):
+                raise ValueError(f"非法指数标的: {index!r}（前缀后需 6 位数字）")
+            return prefix_table[s[:2]], code
+        if not (s.isdigit() and len(s) == 6):
+            raise ValueError(f"非法指数标的: {index!r}（需 6 位代码或 sh/sz/bj 前缀）")
+        if s.startswith(("000", "999", "880")):
+            return 1, s
+        if s.startswith("399"):
+            return 0, s
+        if s.startswith("899"):
+            return 2, s
+        raise ValueError(f"无法判定指数市场: {index!r}（不是 A股指数代码段）")
+
+    async def get_index_members(self, index: str, *, count: int = 100000,
+                                fields: Sequence[int] | None = None
+                                ) -> list[SecurityQuote]:
+        """指数**成分股**（含实时报价）。
+
+        走 MAC ``0x122C`` 板块成分命令，指数代码映射为服务端板块码：``000300`` →
+        31300、``399001`` → 30001、``899050`` → 32050（见 :meth:`_convert_board_code`）。
+        实测（2026-10-22）：``sh000001`` 2230 只（沪市全部）、``sh000300`` 300 只、
+        ``sh000016`` 50 只、``sh000905`` 500 只、``sh000852`` 1000 只、
+        ``sz399006`` 100 只、``bj899050`` 50 只。
+
+        参数:
+            index: 指数代码，可裸写或带前缀（``"000300"`` / ``"sh000300"``）。
+            count: 最多取的成分数（分页上限，默认足够覆盖全部）。
+            fields: 附加报价字段位（同 :meth:`get_board_members`）。
+
+        注意：返回的是**当前**成分，指数调仓后历史日期不适用。
+
+        用法::
+
+            members = await td.get_index_members("000300")
+            syms = [m.symbol for m in members]      # ['sz000001', ...]
+        """
+        _market, code = self._index_pair(index)
+        board_code = self._convert_board_code(code)
+        bits = [int(b) for b in fields] if fields else list(_QUOTE_BITS)
+        items: list[SecurityQuote] = []
+        start = 0
+        while start < count:
+            batch = await self._execute_mac(MacBoardMembersQuotesCmd(
+                board_code, sort_type=0, start=start,
+                page_size=_QUOTE_PAGE, bits=bits))
+            if not batch:
+                break
+            items.extend(_quote_from_member(m) for m in batch)
+            start += len(batch)
+            if len(batch) < _QUOTE_PAGE:
+                break
+        return items[:count]
+
+    async def get_index_trade_stats(
+        self,
+        index: str,
+        date: int | None = None,
+        *,
+        concurrency: int = 24,
+        batch_size: int = 50,
+        members: Sequence[str] | None = None,
+        skip_errors: bool = True,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> IndexTradeStats:
+        """按指数**全部成分股**的逐笔汇总出每分钟成交量与成交笔数。
+
+        为什么必须绕这一圈：**通达信协议里指数本身没有成交笔数** —— 指数逐笔的
+        ``trade_count`` 是「当时均价 × 1000」，不是笔数（见
+        :class:`TransactionRecord` 类注释）。所以「指数笔数」只能用成分股逐笔累加。
+
+        口径校验：``total_amount`` 是**成分股**合计。对「成分 = 指数覆盖面」的指数
+        它与指数快照 ``amount`` 完全相等（``sh000016`` 661.34 亿、``sh000300``
+        2373.98 亿，比值 1.0000）；但深市 ``399xxx`` 的指数 ``amount`` 是**全板块**
+        口径（``sz399001`` = 深市全部股票 5081 亿、``sz399006`` = 创业板全部），
+        两者不可直接比。详见 :class:`IndexTradeStats`。
+
+        参数:
+            index: 指数代码（``"000300"`` / ``"sh000300"``，规则见 :meth:`_index_pair`）。
+            date: ``None`` = 当日；``YYYYMMDD`` = 历史某日（通达信逐笔仅保留最近
+                若干交易日，实测 2026-10-22 可回溯到 10-14，更早返回空）。
+            concurrency: 逐笔并发数（受 MAC 连接池上限约束，池满自动排队）。
+            batch_size: 每批处理的成分数 —— 批内并发拉取、批间串行聚合，
+                用于压住内存峰值（全量 tick 不驻留）。
+            members: 直接给成分股列表（跳过 :meth:`get_index_members`，
+                多日循环时可复用一次成分请求）。
+            skip_errors: 单只成分失败是否忽略（默认忽略并计入 ``failed_members``）。
+            on_progress: 进度回调 ``(已处理, 总数)``，每批结束调用一次。
+
+        返回:
+            :class:`IndexTradeStats`；``minutes`` 是**每分钟增量**，
+            「当日截止该分钟累计」用 ``.cumulative()`` / ``.cum_trade_count()``。
+
+        性能（实测 2026-10-22，盘中）:
+
+        ======================  ==========  ============
+        指数                    成分数      耗时
+        ======================  ==========  ============
+        ``sh000016`` 上证50     50          ~5 s
+        ``sh000300`` 沪深300    300         ~10 s
+        ``sh000001`` 上证指数   2230        ~60-90 s
+        ======================  ==========  ============
+
+        **北交所成分没有笔数**（实测 ``trade_count`` 恒 0），此时
+        ``trade_count_available`` 为 ``False``，只有成交量可用。
+
+        用法::
+
+            st = await td.get_index_trade_stats("000300")
+            for hhmm, cum in st.cum_trade_count():
+                print(hhmm, cum)
+        """
+        started = time.perf_counter()
+        market, code = self._index_pair(index)
+        idx_text = format_symbol(market, code)
+
+        if members is None:
+            members = [m.symbol for m in await self.get_index_members(code)]
+        syms = [s for s in members if s]
+        total = len(syms)
+        if total == 0:
+            raise ValueError(f"指数 {index!r} 没有取到成分股")
+
+        vol_by_min: dict[str, float] = {}
+        tc_by_min: dict[str, int] = {}
+        amt_by_min: dict[str, float] = {}
+        active: set[str] = set()
+        with_tc: set[str] = set()
+        failed = 0
+        step = max(1, int(batch_size))
+        done = 0
+        for i in range(0, total, step):
+            batch = syms[i:i + step]
+            try:
+                ticks = await self.get_ticks(batch, date=date, concurrency=concurrency)
+            except Exception:
+                if not skip_errors:
+                    raise
+                # 整批失败 → 退化为逐只重试，避免一只坏股拖垮一批
+                ticks = []
+                for one in batch:
+                    try:
+                        ticks.extend(await self.get_ticks(one, date=date))
+                    except Exception:
+                        failed += 1
+            for t in ticks:
+                hhmm = t.time[:5]
+                vol_by_min[hhmm] = vol_by_min.get(hhmm, 0.0) + t.vol
+                tc_by_min[hhmm] = tc_by_min.get(hhmm, 0) + t.trade_count
+                amt_by_min[hhmm] = amt_by_min.get(hhmm, 0.0) + t.price * t.vol * 100.0
+                active.add(t.symbol)
+                if t.trade_count:
+                    with_tc.add(t.symbol)
+            done += len(batch)
+            if on_progress is not None:
+                on_progress(min(done, total), total)
+
+        minutes = [
+            MinuteTradeStat(time=k, volume=vol_by_min[k],
+                            trade_count=tc_by_min[k], amount=amt_by_min[k])
+            for k in sorted(vol_by_min)
+        ]
+        return IndexTradeStats(
+            index=idx_text,
+            date=date,
+            member_count=total,
+            active_members=len(active),
+            trade_count_members=len(with_tc),
+            minutes=minutes,
+            total_volume=sum(vol_by_min.values()),
+            total_trade_count=sum(tc_by_min.values()),
+            total_amount=sum(amt_by_min.values()),
+            failed_members=failed,
+            elapsed=time.perf_counter() - started,
+        )
+
+    async def get_index_trade_stats_multi(
+        self,
+        index: str,
+        dates: Sequence[int | None],
+        *,
+        concurrency: int = 24,
+        batch_size: int = 50,
+        skip_errors: bool = True,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[IndexTradeStats]:
+        """多日批量版 :meth:`get_index_trade_stats`（成分只取一次）。
+
+        用于「近 N 日同时点累计平均笔数」这类基准曲线：一次拿到 N 天数据，
+        避免每天重复请求成分表。
+
+        用法::
+
+            # 最近 5 个交易日的笔数曲线（日期自己给，节假日请自行跳过）
+            stats = await td.get_index_trade_stats_multi(
+                "000300", [20261016, 20261019, 20261020, 20261021, 20261022])
+        """
+        market, code = self._index_pair(index)
+        members = [m.symbol for m in await self.get_index_members(code)]
+        out: list[IndexTradeStats] = []
+        for d in dates:
+            out.append(await self.get_index_trade_stats(
+                code, d, concurrency=concurrency, batch_size=batch_size,
+                members=members, skip_errors=skip_errors,
+                on_progress=on_progress))
+        return out
 
     # ================================================================== #
     # 八、服务器文件（原始字节 + 解析）

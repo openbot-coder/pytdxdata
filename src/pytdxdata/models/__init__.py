@@ -262,7 +262,11 @@ class TransactionRecord:
 
 @dataclass(slots=True)
 class MinuteBar:
-    """分时（跨市场统一模型；A股 MAC 0x122D / 扩展市场 0x122D 同构）"""
+    """分时（跨市场统一模型；A股 MAC 0x122D / 扩展市场 0x122D 同构）。
+
+    ``hour``/``minute`` 是**真实时钟**（``0 <= hour < 24``），跨日的分时请用
+    :attr:`datetime` / :attr:`trading_date`，不要自己拿 ``hour`` 拼日期。
+    """
     price: float
     vol: float
     avg_price: float = 0.0   # 均价(协议第2字段)
@@ -273,6 +277,50 @@ class MinuteBar:
     code: str = ""
     date: int = 0            # YYYYMMDD
     fields: dict[str, float] = field(default_factory=dict)  # 扩展市场额外字段（动量等）
+    day_offset: int = 0      # 相对 date 的自然日偏移：美股凌晨段为 +1
+
+    def __post_init__(self) -> None:
+        """美股（EX 通道）分时时间归一化。
+
+        EX 分时的 ``minutes`` 字段是**自开盘起的连续分钟数**，不是「当天的分钟数」：
+        实测 ``usAAPL`` 返回 ``21:30`` ~ ``27:59``（390 条里 240 条的 ``hour`` ≥ 24）。
+        ``27:59`` 实际是次日 ``03:59`` 北京时间。直接 ``minutes // 60`` 会得到
+        ``hour=27`` 这种**非法时钟值**，任何 ``datetime(...)`` 拼接都会抛异常，
+        按小时聚合也会把凌晨段错误地归到同一天。
+
+        这里拆成「真实小时 + 日偏移」：``hour = (minutes // 60) % 24``，
+        ``day_offset = (minutes // 60) // 24``。A股/港股/期货的 ``hour`` 本就合法
+        （A股合成时间 09:30~15:00、港股 09:30~16:00），**零行为变化**。
+        """
+        if self.hour >= 24:
+            self.day_offset += self.hour // 24
+            self.hour %= 24
+
+    @property
+    def datetime(self) -> datetime:
+        """该分时点的时刻（北京时间，已含跨日偏移）。"""
+        base = date(self.date // 10000, self.date // 100 % 100, self.date % 100)
+        d = base + timedelta(days=self.day_offset)
+        return datetime(d.year, d.month, d.day, self.hour, self.minute)
+
+    @property
+    def is_us(self) -> bool:
+        """是否美股（EX 通道 ``US_STOCK``）。"""
+        return self.market in _US_EX_MARKETS
+
+    @property
+    def trading_date(self) -> str:
+        """该分时点归属的交易日，``YYYY-MM-DD``。
+
+        美股：一个交易日横跨两个北京自然日（21:30~次日 04:00），凌晨段
+        （北京 hour < 12）归属**前一天**的美东交易日，与
+        :attr:`SecurityBar.trading_date` 口径一致。A股/港股/期货即 ``date`` 本身。
+        按交易日聚合分时（合成日线、日内统计）**必须用它**。
+        """
+        base = self.datetime
+        if self.is_us and base.hour < _US_DAY_SPLIT_HOUR:
+            base -= timedelta(days=1)
+        return base.date().isoformat()
 
 
 @dataclass(slots=True)
@@ -514,3 +562,82 @@ class FinancialRecord:
     market: int                # 0=深 1=沪
     report_date: int           # 报告期 YYYYMMDD
     fields: list[float] = field(default_factory=list)
+
+
+# ===== 指数成分成交汇总（TdxData.get_index_trade_stats） =====
+
+@dataclass(slots=True)
+class MinuteTradeStat:
+    """指数**全部成分股**汇总后的单分钟成交**增量**（不是累计）。
+
+    累计曲线用 :meth:`IndexTradeStats.cumulative`，不要自己再对同一字段反复累加。
+    """
+    time: str           # HH:MM
+    volume: float       # 成交量合计（手，1 手 = 100 股）
+    trade_count: int    # 成交笔数合计
+    amount: float       # 成交额估算（元）= Σ(逐笔价 × 手 × 100)
+
+
+@dataclass(slots=True)
+class IndexTradeStats:
+    """某个指数「全部成分股逐笔」汇总出的成交曲线。
+
+    为什么需要它：**通达信协议里指数本身没有成交笔数** —— 指数逐笔
+    （``sh000001``）的 ``trade_count`` 字段实际是「当时均价 × 1000」（见
+    :class:`TransactionRecord`）。所以「指数笔数」唯一可行的口径是
+    **把成分股的逐笔笔数累加**，本类即该口径。
+
+    口径校验（2026-10-22 实测）：
+
+    - ``total_amount`` 是**成分股**合计。对「成分恰好就是指数覆盖面」的指数，它与
+      指数快照 ``amount`` **完全相等**：``sh000016`` 661.34 亿 = 661.34 亿、
+      ``sh000300`` 2373.98 亿 = 2373.98 亿（比值 1.0000）。
+    - **但深市 ``399xxx`` 的指数成交额字段是「全板块」口径**，不是样本股：
+      实测 ``sz399001`` 快照 5081.40 亿 = 深市 2908 只股票合计 5081.01 亿、
+      ``sz399006`` 2568.60 亿 = 创业板全部股票合计。所以拿深市指数 ``amount``
+      与 ``total_amount`` 比会得到 ~0.43 这类无意义比值——不是数据错，是口径不同。
+    - ``total_volume`` 单位是**手**（与指数逐笔的「百元」单位不同，勿混用）。
+    - 北交所成分（``bj`` 前缀）**没有笔数字段**（实测 ``trade_count`` 恒为 0）：
+      此时 ``trade_count_members = 0``、:attr:`trade_count_available` 为 ``False``，
+      只有成交量可用。``sh``/``sz`` 成分均正常返回笔数。
+
+    ``minutes`` 只包含**实际有成交**的分钟（午休 11:30~13:00 之间无桶），
+    画累计曲线时请按 ``time`` 自行补齐或直接连线。
+    """
+    index: str                      # 规范化指数标的（如 sh000300）
+    date: int | None                # None=当日；否则 YYYYMMDD
+    member_count: int               # 指数成分数
+    active_members: int             # 实际有逐笔成交的成分数（停牌/无成交不计）
+    trade_count_members: int        # 返回了笔数的成分数（北交所为 0）
+    minutes: list[MinuteTradeStat] = field(default_factory=list)
+    total_volume: float = 0.0
+    total_trade_count: int = 0
+    total_amount: float = 0.0
+    failed_members: int = 0         # 逐笔拉取失败的成分数（skip_errors=True 时）
+    elapsed: float = 0.0            # 本次汇总耗时（秒）
+
+    @property
+    def trade_count_available(self) -> bool:
+        """是否有笔数口径（北交所成分为 ``False``，此时 ``trade_count`` 全 0）。"""
+        return self.trade_count_members > 0
+
+    def cumulative(self) -> list[MinuteTradeStat]:
+        """累计曲线：当日**截止该分钟**的累计量，时间升序。
+
+        这是「当日截止该分钟累计成交笔数」的直接数据源。
+        """
+        out: list[MinuteTradeStat] = []
+        vol = 0.0
+        tc = 0
+        amt = 0.0
+        for m in self.minutes:
+            vol += m.volume
+            tc += m.trade_count
+            amt += m.amount
+            out.append(MinuteTradeStat(time=m.time, volume=vol,
+                                       trade_count=tc, amount=amt))
+        return out
+
+    def cum_trade_count(self) -> list[tuple[str, int]]:
+        """``[(HH:MM, 累计笔数)]``，画「截止该分钟累计笔数」曲线用。"""
+        return [(m.time, m.trade_count) for m in self.cumulative()]
