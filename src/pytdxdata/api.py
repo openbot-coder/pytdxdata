@@ -146,6 +146,8 @@ _EX_PAGE = 1000           # EX 商品列表单页
 _TICK_PAGE = 1000         # MAC 逐笔单页
 _EX_TICK_PAGE = 1800      # 港股逐笔单页
 _ALL_PAGES_CAP = 50       # count=None（全量）时的翻页上限
+# 集合竞价**委托**记录标记（0x122F 第 5 字段）。不是成交，见 _ticks_one 注释。
+_BS_AUCTION_ORDER = 8
 
 # 港股系市场：逐笔走 EX 专用 16B 协议（0x23FC/0x2406），其余扩展市场走 MAC 0x122F
 _HK_MARKETS = frozenset({27, 31, 48, 49, 71, 98})
@@ -795,12 +797,26 @@ class TdxData:
 
         参数:
             date: ``None``=当日，``YYYYMMDD``=历史某日。
-            start: 起始偏移。
+            start: 起始偏移，**从最新一笔往回数**（``0``=当天最后一条）。
+                ``start=1000`` 表示跳过最近 1000 条、从更早的位置开始。
             count: ``None``=尽量取全量（自动翻页，上限 50 页）；给了就取这么多条。
 
         返回:
-            ``list[TransactionRecord]``，按入参标的顺序拼接（A股含 ``trade_count``，
-            港股为 HH:MM 时间 + ``fields["zengcang"]`` 增仓）。
+            ``list[TransactionRecord]``，按入参标的顺序拼接，**每条标的内部按时间升序**。
+            注意服务端是按约 3 秒聚合的切片，``vol``/``trade_count`` 是切片增量
+            而非当日累计。
+            A股含 ``trade_count``，港股为 HH:MM 时间 + ``fields["zengcang"]`` 增仓。
+
+        **集合竞价委托（``bs_flag=8``）不会出现在结果里**：它们不是成交，``vol``
+        是累计撮合量（会被后续记录覆盖），计入会让 Σvol 比真值虚高 20%~160%，
+        且不同主机收录的条数不同 → 同一查询两次调用结果不一致。
+
+        **指数（``sh000016`` 等）的两个字段语义与个股不同**：
+
+        - ``vol`` 单位是**百元**（成交额/100），不是手。
+        - ``trade_count`` 是**当时均价 × 1000**，不是笔数。
+
+        详见 :class:`~pytdxdata.models.TransactionRecord` 的类注释。
         """
         syms = parse_symbols(symbols)
         sem = asyncio.Semaphore(max(1, concurrency))
@@ -821,24 +837,73 @@ class TdxData:
             if sym.is_ex:
                 rows = await self._ticks_ex(sym, date=date, start=start, count=count)
             else:
-                def make_cmd(s: int, c: int):
-                    return MacTransactionCmd(sym.market, sym.code, date or 0, s, c)
-
-                spec = PageSpec(
-                    page_size=_TICK_PAGE,
-                    total=None if count is None else start + count,
-                    min_page=100,
-                    stop_when_short=True,
-                    max_pages=_ALL_PAGES_CAP if count is None else None,
-                    start_offset=start,
-                )
-                rows = await self._fetch_paginated_list("mac", make_cmd, spec)
+                rows = await self._ticks_cn_serial(sym, date=date, start=start,
+                                                   count=count)
+            # ★ 过滤集合竞价**委托**记录（bs_flag=8）。必须在逐页拉取**全部结束之后**做：
+            # 分页靠 `len(rows) < page_size` 判终止，若在 parse_response 里过滤，
+            # 满页会被剥短成"短页" → 提前终止 → 丢数据。
+            # 实测（2026-10-21 sh600000）：b8 是 09:15~09:25 / 14:57~15:00 竞价段的
+            # 撮合快照，vol 是**累计值**（可被后续记录覆盖），不是成交增量；
+            # 计入后 Σvol 比真值虚高 20%~160%，且**不同主机的 b8 集合不同**
+            # （干净主机 0 条、脏主机 135 条）→ 同一查询两次调用结果不一致。
+            # 剔除后：Σvol 与快照 vol 精确相等（比值 1.0000），且跨主机逐条一致。
+            rows = [r for r in rows if r.bs_flag != _BS_AUCTION_ORDER]
+            # 排序放在 pack 之前，让缓存直接存入正确顺序，避免每次命中都重排。
+            rows.sort(key=lambda r: r.time)
             return pack_payload(rows)
 
         records = unpack_payload(await self._cache.get_or_fetch(key, fetch))
         for r in records:
             r.symbol = sym.text
         return records
+
+    async def _ticks_cn_serial(self, sym: Symbol, *, date: int | None, start: int,
+                               count: int | None) -> list[TransactionRecord]:
+        """A股逐笔（0x122F）**单连接串行游标**翻页。
+
+        为什么不用并发分页器：``0x122F`` 的 ``start`` 是「从**最新一笔**往回数的偏移」，
+        是个**相对锚点**，不是稳定的绝对序号。而池里各主机对集合竞价委托（``bs_flag=8``）
+        的收录**不一致**（实测干净主机 0 条、脏主机 135 条），同一 ``start`` 在不同主机上
+        落到**不同的真实成交**上。并发分页 = 各页来自不同主机 → 页边界既**重叠**
+        （sh600000 冗余 116 条）又**漏条**（13:03 附近丢 59 条），Σvol 偏移 −1.2%。
+
+        逐笔单日仅 5~6 页（1000 条/页），串行开销可忽略、换来精确一致，
+        故这里固定**单连接**、按 ``start`` 递增（= 向更早方向）推进。
+
+        返回：按页序累加后再**整体翻转**，得到时间升序的完整列表。
+        """
+        chunks: list[list[TransactionRecord]] = []
+        pos = start
+        remaining = count
+        pc = await self._mac_pool.acquire()
+        try:
+            for _ in range(_ALL_PAGES_CAP):
+                n = _TICK_PAGE if remaining is None else min(_TICK_PAGE, remaining)
+                if n <= 0:
+                    break
+                rows = await pc.execute(
+                    MacTransactionCmd(sym.market, sym.code, date or 0, pos, n))
+                if not rows:
+                    break
+                chunks.append(list(rows))
+                pos += len(rows)
+                if remaining is not None:
+                    remaining -= len(rows)
+                    if remaining <= 0:
+                        break
+                # 短页 = 已到最早一笔
+                if len(rows) < n:
+                    break
+        except Exception:
+            await self._mac_pool.release(pc, broken=True)
+            raise
+        await self._mac_pool.release(pc)
+        out: list[TransactionRecord] = []
+        for chunk in reversed(chunks):
+            out.extend(chunk)
+        for r in out:
+            r.symbol = sym.text
+        return out
 
     async def _ticks_ex(self, sym: Symbol, *, date: int | None, start: int,
                         count: int | None) -> list[TransactionRecord]:
@@ -848,7 +913,7 @@ class TdxData:
         )
         hk = sym.market in _HK_MARKETS
         page = _EX_TICK_PAGE if hk else _TICK_PAGE
-        out: list[TransactionRecord] = []
+        chunks: list[list[TransactionRecord]] = []
         pos = start
         remaining = count
         for _ in range(_ALL_PAGES_CAP):
@@ -860,22 +925,27 @@ class TdxData:
                        if date else
                        GetExTransactionDataCmd(sym.market, sym.code, pos, n))
                 rows = await self._execute_ex(cmd)
-                out.extend(self._ex_tick(sym, r) for r in rows)
+                chunk = [self._ex_tick(sym, r) for r in rows]
             else:
                 cmd = MacTransactionCmd(sym.market, sym.code, date or 0, pos, n)
                 rows = await self._execute_ex(cmd)
                 for r in rows:
                     r.symbol = sym.text
-                out.extend(rows)
-            if not rows:
+                chunk = list(rows)
+            if not chunk:
                 break
-            pos += len(rows)
+            # EX 通道的 pos 同样是"从最新往回数"，逐页倒序累加 → 最后整体翻转。
+            chunks.append(chunk)
+            pos += len(chunk)
             if remaining is not None:
-                remaining -= len(rows)
+                remaining -= len(chunk)
                 if remaining <= 0:
                     break
-            if len(rows) < n:
+            if len(chunk) < n:
                 break
+        out: list[TransactionRecord] = []
+        for chunk in reversed(chunks):
+            out.extend(chunk)
         return out
 
     @staticmethod

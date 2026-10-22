@@ -13,16 +13,23 @@ MAX_QUOTES = 80
 
 
 def price_decimal_digits(market: int, code: str) -> int:
-    """推断报价有效小数位：股票2位(/100)、指数/ETF/基金/转债/国债3位(/1000)。"""
+    """推断报价有效小数位：股票 2 位(/100)、ETF/基金 3 位(/1000)。
+
+    **沪市指数必须是 2 位**，此前把 ``000``/``8`` 一并判成 3 位，导致上证50、
+    上证指数、科创50 等**价格整体少 10 倍**。实证（2026-10-21）：协议原始整数
+    与分时/逐笔价格比对，6 只沪市指数 + 2 只板块指数（880001/880305）全部是
+    ``×10`` 错误，而 4 只沪市 ETF（510300/510500/588000/511010）、4 只沪市
+    股票、3 只科创板、3 只深市指数、深市股票/创业板/ETF 全部 ``×1`` 正确。
+    """
     code = (code or "").strip().rstrip("\x00")
     if market == 1:  # SH
-        if code.startswith(("5", "000", "8")):
-            return 3
-        return 2
+        if code.startswith("5"):
+            return 3          # ETF/基金
+        return 2              # 指数(000xxx/880xxx)、股票(60xxxx/688xxx)
     if market == 0:  # SZ
         if code.startswith("1"):
-            return 3
-        return 2
+            return 3          # 基金/债券
+        return 2              # 指数(399xxx)、股票(00xxxx/30xxxx)
     return 2
 
 

@@ -111,8 +111,11 @@ class MacTransactionCmd(BaseCommand[list[TransactionRecord]]):
         for i in range(count):
             offset = 39 + i * 18
             try:
+                # trade_count 必须按**有符号** int32 解析：集合竞价段（bs_flag=8）
+                # 该字段实为负值，按 uint32 会读出 42 亿量级的脏数据。
+                # 实测（2026-10-21 sh600000）：09:15:03 原始 96fcffff = -874。
                 time_sec, price, volume, trade_count, bs_flag = unpack_from(
-                    "<IfIIH", body, offset, "mac transaction item"
+                    "<IfIiH", body, offset, "mac transaction item"
                 )
             except ValueError:
                 break
