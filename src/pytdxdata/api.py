@@ -25,6 +25,7 @@ import logging
 import re
 import time
 import warnings
+from collections import deque
 from collections.abc import Callable
 from datetime import date as _date, datetime
 from pathlib import Path
@@ -147,6 +148,7 @@ _KLINE_MAX_BARS: dict[KlinePeriod, int] = {
 # 自定义字段报价（0x122B/0x122C）基础字段位：昨收/开/高/低/现价/量/量比/额
 _QUOTE_BITS = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]
 _QUOTE_PAGE = 80          # 0x122B/0x122C 单次上限 80 只
+_QUOTE_PIPE_CHUNK = 3     # 单连接流水线一次取几片（实测 3 片 + 每台 2 连接最稳）
 _EX_PAGE = 1000           # EX 商品列表单页
 _TICK_PAGE = 1000         # MAC 逐笔单页
 _EX_TICK_PAGE = 1800      # 港股逐笔单页
@@ -237,7 +239,7 @@ class TdxData:
         default_adjust: Adjust = Adjust.NONE,
         max_inflight: int = 64,
         pool_min: int = 3,
-        pool_max: int = 12,
+        pool_max: int = 24,
         mac_pool_cap: int = 4,
         std_pool_cap: int = 4,
         ex_pool_cap: int = 2,
@@ -442,7 +444,9 @@ class TdxData:
     # ================================================================== #
 
     async def get_quotes(self, symbols: str | Sequence[str], *,
-                         fields: Sequence[int] | None = None
+                         fields: Sequence[int] | None = None,
+                         concurrency: int | None = None,
+                         pipeline: bool = True
                          ) -> list[SecurityQuote]:
         """报价，一次可跨市场、跨通道混合查询。
 
@@ -452,6 +456,11 @@ class TdxData:
             fields: 可选自定义字段位（如 ``[0x00, 0x04, 0x38]``）。给了就走 MAC/EX 的
                     0x122B 字段位通道（有 ``name``，无五档）；不给时 A股走标准通道
                     （**有五档 bid/ask、买卖量、涨跌停价，无 name**），扩展市场走 0x122B。
+            concurrency: 连接并发数（默认取连接池上限）。协议硬上限 80 只/请求，
+                    全市场约 5,200 只 A股需切 66 片；调小可降低对服务器的压力。
+            pipeline: 是否启用**单连接流水线**（默认开启）。开启后一条连接可一次发出
+                    多个分片、只付一次往返，全市场 5,200 只 A股由 ~4s 降到 **~0.3s**；
+                    个股或小批量不受影响。个别服务器不支持流水线时会自动降级为逐片。
 
         返回:
             ``list[SecurityQuote]``，按入参顺序排列（各记录带 ``symbol``）。
@@ -462,49 +471,154 @@ class TdxData:
         bits = [int(b) for b in fields] if fields else None
         tag = "mac:" + _fields_tag(bits) if bits else "std"
         key = CacheKey.quote_key([s.as_pair() for s in syms], tag=tag)
-        payload = await self._cache.get_or_fetch(
-            key, lambda: self._fetch_quotes(syms, bits))
-        quotes = unpack_payload(payload)
+        quotes = await self._cache.get_or_fetch_obj(
+            key,
+            lambda: self._fetch_quotes(syms, bits, concurrency, pipeline),
+            pack=pack_payload, unpack=unpack_payload)
         order = {s.as_pair(): i for i, s in enumerate(syms)}
         quotes.sort(key=lambda q: order.get((int(q.market), q.code), len(order)))
         return quotes
 
-    async def _fetch_quotes(self, syms: list[Symbol], bits: list[int] | None) -> bytes:
+    async def _fetch_quotes(self, syms: list[Symbol], bits: list[int] | None,
+                            concurrency: int | None = None,
+                            pipeline: bool = True) -> list[SecurityQuote]:
         out: list[SecurityQuote] = []
         cn = [s for s in syms if not s.is_ex]
         ex = [s for s in syms if s.is_ex]
         if bits is None:
             if cn:
-                out.extend(await self._quotes_std(cn))
+                out.extend(await self._quotes_std(
+                    cn, concurrency=concurrency, pipeline=pipeline))
             if ex:
                 rows = await self._execute_ex(
                     MacSymbolQuotesCmd([s.as_pair() for s in ex], None))
                 out.extend(_quote_from_member(m) for m in rows)
         else:
-            for i in range(0, len(syms), _QUOTE_PAGE):
-                batch = syms[i:i + _QUOTE_PAGE]
-                pairs = [s.as_pair() for s in batch]
-                cn_pairs = [p for p, s in zip(pairs, batch) if not s.is_ex]
-                ex_pairs = [p for p, s in zip(pairs, batch) if s.is_ex]
-                if cn_pairs:
-                    rows = await self._execute_mac(MacSymbolQuotesCmd(cn_pairs, bits))
-                    out.extend(_quote_from_member(m) for m in rows)
-                if ex_pairs:
-                    rows = await self._execute_ex(MacSymbolQuotesCmd(ex_pairs, bits))
-                    out.extend(_quote_from_member(m) for m in rows)
-        return pack_payload(out)
+            batches = [syms[i:i + _QUOTE_PAGE]
+                       for i in range(0, len(syms), _QUOTE_PAGE)]
+            sem = asyncio.Semaphore(self._quote_concurrency(concurrency))
 
-    async def _quotes_std(self, syms: list[Symbol]) -> list[SecurityQuote]:
-        """A股标准通道五档报价（>80 只自动切批）。"""
-        out: list[SecurityQuote] = []
-        for i in range(0, len(syms), MAX_QUOTES):
-            batch = syms[i:i + MAX_QUOTES]
-            cmd = GetSecurityQuotesCmd([s.as_pair() for s in batch])
-            rows = await self._execute_standard(cmd)
+            async def one(batch: list[Symbol]) -> list[SecurityQuote]:
+                async with sem:
+                    pairs = [s.as_pair() for s in batch]
+                    cn_pairs = [p for p, s in zip(pairs, batch) if not s.is_ex]
+                    ex_pairs = [p for p, s in zip(pairs, batch) if s.is_ex]
+                    got: list[SecurityQuote] = []
+                    if cn_pairs:
+                        rows = await self._execute_mac(
+                            MacSymbolQuotesCmd(cn_pairs, bits))
+                        got.extend(_quote_from_member(m) for m in rows)
+                    if ex_pairs:
+                        rows = await self._execute_ex(
+                            MacSymbolQuotesCmd(ex_pairs, bits))
+                        got.extend(_quote_from_member(m) for m in rows)
+                    return got
+
+            if batches:
+                for got in await asyncio.gather(*(one(b) for b in batches)):
+                    out.extend(got)
+        return out
+
+    def _quote_concurrency(self, requested: int | None) -> int:
+        """连接并发数：显式指定优先，否则按「每台服务器 2 连接」估算。
+
+        实测（5,227 只 A股 / 66 片，11 台服务器）：
+
+        ==========  =====  ======  ======  ======
+        并发         每台连接  流水深度   p50     max
+        ==========  =====  ======  ======  ======
+        11          1      6       455ms   464ms
+        12          1~2    3       457ms   523ms
+        **22**      **2**  **3**   **325ms**  **334ms**
+        33          3      2       328ms   345ms
+        ==========  =====  ======  ======  ======
+
+        结论：每台 2 连接 × 流水 3 片最稳；再多连接只是把同一台的队列搬个位置，
+        对整体无益反增抖动。池 ``per_server_cap`` 默认 4，2 连接仍留有余量。
+        """
+        if requested is not None and requested > 0:
+            return max(1, int(requested))
+        n = len(self._std_pool.servers)
+        return max(1, min(self._std_pool.max_size, (n or 1) * 2))
+
+    async def _quotes_std(self, syms: list[Symbol], *,
+                          concurrency: int | None = None,
+                          pipeline: bool = True) -> list[SecurityQuote]:
+        """A股标准通道五档报价（协议上限 80 只/请求，超出自动切批）。
+
+        切片多于 1 片时把各片**按轮转分给若干条连接**，每条连接内部用流水线
+        一次发出（1 次往返拿多片），不再逐片往返。
+        """
+        if not syms:
+            return []
+
+        def stamp(rows: list[SecurityQuote]) -> list[SecurityQuote]:
             for q in rows:
                 q.symbol = format_symbol(q.market, q.code)
-            out.extend(rows)
+            return rows
+
+        batches = [syms[i:i + MAX_QUOTES]
+                   for i in range(0, len(syms), MAX_QUOTES)]
+        if len(batches) == 1:
+            cmd = GetSecurityQuotesCmd([s.as_pair() for s in batches[0]])
+            return stamp(await self._execute_standard(cmd))
+
+        conc = min(self._quote_concurrency(concurrency), len(batches))
+
+        # 首次大批量：先把连接并发建好，否则 acquire 会在池锁里串行握手
+        # （22 路并发首次调用实测多花 5~6s）
+        await self._std_pool.warm(conc)
+
+        if not pipeline:
+            sem = asyncio.Semaphore(conc)
+
+            async def one(batch: list[Symbol]) -> list[SecurityQuote]:
+                async with sem:
+                    cmd = GetSecurityQuotesCmd([s.as_pair() for s in batch])
+                    return stamp(await self._execute_standard(cmd))
+
+            groups = await asyncio.gather(*(one(b) for b in batches))
+            return [q for g in groups for q in g]
+
+        # 工作窃取：连接做完一批就回来再取，快的多干、慢的少干。
+        # 平均分配（每台固定几片）会被最慢的一台拖住 —— 实测 11 台平均分
+        # 时 p50 在 400~580ms 之间抖，改窃取后波动收窄。
+        queue = deque(batches)
+        gate = asyncio.Lock()
+
+        async def worker() -> list[SecurityQuote]:
+            got: list[SecurityQuote] = []
+            while True:
+                async with gate:
+                    if not queue:
+                        return got
+                    take = min(_QUOTE_PIPE_CHUNK, len(queue))
+                    chunk = [queue.popleft() for _ in range(take)]
+                for rows in await self._execute_std_pipeline(chunk):
+                    got.extend(stamp(rows))
+
+        out: list[SecurityQuote] = []
+        for part in await asyncio.gather(*(worker() for _ in range(conc))):
+            out.extend(part)
         return out
+
+    async def _execute_std_pipeline(
+        self, batches: list[list[Symbol]]
+    ) -> list[list[SecurityQuote]]:
+        """一条连接流水线执行多片报价；节点不支持流水线时降级为逐片。"""
+        cmds = [GetSecurityQuotesCmd([s.as_pair() for s in b]) for b in batches]
+        pc = await self._std_pool.acquire()
+        try:
+            rows = await pc.execute_pipeline(cmds)
+        except Exception:
+            # 流水线中断后响应流已错配，连接必须废弃；改用逐片（每条独立借还）
+            await self._std_pool.release(pc, broken=True)
+            fallback: list[list[SecurityQuote]] = []
+            for cmd in cmds:
+                fallback.append(await self._execute_standard(cmd))
+            return fallback
+        await self._std_pool.release(pc)
+        return rows
 
     async def get_snapshot(self, symbols: str | Sequence[str]) -> list[SymbolSnapshot]:
         """个股特征快照（当日/换手/活跃度等，仅 A股）。"""
@@ -860,6 +974,10 @@ class TdxData:
         - ``vol`` 单位是**百元**（成交额/100），不是手。
         - ``trade_count`` 是**当时均价 × 1000**，不是笔数。
 
+        **ETF / LOF 同样没有笔数**：``trade_count`` 是「价格 × 1000」（货币 ETF 恒为 0），
+        这类记录的 ``trade_count_available`` 为 ``False`` 且 ``trade_count`` 已置 0。
+        判定规则见 :func:`~pytdxdata.symbols.has_order_count`。
+
         详见 :class:`~pytdxdata.models.TransactionRecord` 的类注释。
         """
         syms = parse_symbols(symbols)
@@ -1006,6 +1124,7 @@ class TdxData:
             trade_count=0,
             bs_flag=int(row.get("direction", 0) or 0),
             fields=fields,
+            trade_count_available=False,   # 扩展市场逐笔不带笔数字段
         )
 
     async def get_minutes(
@@ -1392,6 +1511,14 @@ class TdxData:
 
         注意：返回的是**当前**成分，指数调仓后历史日期不适用。
 
+        ⚠️ **综合指数的成员名单不完整**（实测 2026-10-22）：``sh000001`` 只返回
+        2230 只（2190 A + 40 B），而当日沪市 A 股实有 2318 只；缺的 128 只
+        （多为近期科创板/主板新股）当日成交 282 亿，正好对上「指数日线 amount −
+        成员日线 amount」的 297 亿（残差 4.9%）。因此
+        :meth:`get_index_trade_stats` 对**综合指数**会系统性低估约 4.6%；
+        样本指数 ``sh000016``（50 只）/ ``sh000300``（300 只）实测比值
+        **1.000000**，不受影响。要精确汇总综指成交，请自行用全市场股票列表。
+
         用法::
 
             members = await td.get_index_members("000300")
@@ -1508,10 +1635,12 @@ class TdxData:
             for t in ticks:
                 hhmm = t.time[:5]
                 vol_by_min[hhmm] = vol_by_min.get(hhmm, 0.0) + t.vol
-                tc_by_min[hhmm] = tc_by_min.get(hhmm, 0) + t.trade_count
+                # 成分里若混入 ETF/LOF（协议无笔数），不能把占位值累加进笔数
+                if getattr(t, "trade_count_available", True):
+                    tc_by_min[hhmm] = tc_by_min.get(hhmm, 0) + t.trade_count
                 amt_by_min[hhmm] = amt_by_min.get(hhmm, 0.0) + t.price * t.vol * 100.0
                 active.add(t.symbol)
-                if t.trade_count:
+                if getattr(t, "trade_count_available", True) and t.trade_count:
                     with_tc.add(t.symbol)
             done += len(batch)
             if on_progress is not None:

@@ -206,6 +206,50 @@ def test_mac_transaction_parse_negative_trade_count_auction():
     assert max(r.trade_count for r in recs) == 3
 
 
+def test_mac_transaction_etf_trade_count_unavailable():
+    """ETF/LOF 的 trade_count 是「价格×1000」占位，必须标记为不可用。
+
+    实测（2026-10-22 sh510310 15:27:35）：价 3.989、原字段 3994；
+    旧行为把它当笔数打印成「3994笔」，是假的。
+    """
+    body = bytearray(39 + 2 * 18)
+    struct.pack_into("<H", body, 29, 2)
+    struct.pack_into("<IfIiH", body, 39, 56000, 3.989, 15, 3994, 5)
+    struct.pack_into("<IfIiH", body, 39 + 18, 56003, 3.989, 4, 3994, 5)
+
+    for code, market, expect in (("510310", 1, False), ("159915", 0, False),
+                                 ("600000", 1, True), ("501050", 1, True)):
+        cmd = MacTransactionCmd(market, code, 20261022, 0, 100)
+        recs = cmd.parse_response(bytes(body))
+        assert recs[0].trade_count_available is expect, code
+        if expect:
+            assert recs[0].trade_count == 3994
+        else:
+            assert recs[0].trade_count == 0
+
+
+@pytest.mark.parametrize("market,code,expect", [
+    # 股票 / 可转债 / 回购：有笔数
+    (1, "600000", True), (1, "688111", True), (1, "689009", True),
+    (0, "000001", True), (0, "300750", True), (0, "128136", True),
+    (1, "204001", True),
+    # 沪市 LOF 50x：实测有真实笔数，不能一刀切
+    (1, "501050", True), (1, "501018", True), (1, "502000", True), (1, "506000", True),
+    # 沪市 ETF/LOF 51/52/56/58：无笔数
+    (1, "510310", False), (1, "511990", False), (1, "512880", False),
+    (1, "513050", False), (1, "515000", False), (1, "518880", False),
+    (1, "560010", False), (1, "562500", False), (1, "588000", False),
+    # 深市基金：无笔数
+    (0, "159915", False), (0, "159001", False),
+    (0, "161725", False), (0, "160119", False), (0, "165520", False),
+    # 指数：无笔数
+    (1, "000001", False), (0, "399001", False), (1, "880305", False),
+])
+def test_has_order_count(market, code, expect):
+    from pytdxdata.symbols import has_order_count
+    assert has_order_count(market, code) is expect
+
+
 # ---------- 跨时区时间戳归一化（美股 EX 通道） ----------
 #
 # 通达信 EX 通道对美股返回的时间戳把两个时区拼在一起：日期字段是**美东交易日**、

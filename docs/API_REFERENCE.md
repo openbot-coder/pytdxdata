@@ -55,7 +55,7 @@ from pytdxdata import (
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
-| `get_quotes(symbols, *, fields=None)` | `list[SecurityQuote]` | 跨市场混合报价（A 股标准五档；给了 fields 走 MAC/EX 字段位有 name） |
+| `get_quotes(symbols, *, fields=None, concurrency=None, pipeline=True)` | `list[SecurityQuote]` | 跨市场混合报价（A 股标准五档；给了 fields 走 MAC/EX 字段位有 name）。超 80 只自动切批，`pipeline` 开启**单连接流水线**，全市场 5,200 只 ~0.33s |
 | `get_snapshot(symbols)` | `list[SymbolSnapshot]` | 个股特征快照（A 股） |
 | `get_auction(symbols)` | `list[AuctionItem]` | 集合竞价（A 股） |
 | `get_capital_flow(symbols)` | `list[CapitalFlow]` | 个股资金流向（A 股） |
@@ -71,7 +71,7 @@ from pytdxdata import (
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
-| `get_ticks(symbols, *, date=None, start=0, count=None, concurrency=6)` | `list[TransactionRecord]` | 跨市场逐笔成交。返回按时间升序；`start` **从最新一笔往回数**；`vol`/`trade_count` 为约 3 秒切片的增量值（非累计）。**已剔除 `bs_flag=8` 竞价委托**（非成交，`vol` 为累计撮合量）。**指数**：`vol` 单位是百元（成交额/100）、`trade_count` 是均价×1000，均非股票语义 |
+| `get_ticks(symbols, *, date=None, start=0, count=None, concurrency=6)` | `list[TransactionRecord]` | 跨市场逐笔成交。返回按时间升序；`start` **从最新一笔往回数**；`vol`/`trade_count` 为约 3 秒切片的增量值（非累计）。**已剔除 `bs_flag=8` 竞价委托**（非成交，`vol` 为累计撮合量）。**指数**：`vol` 单位是百元（成交额/100）、`trade_count` 是均价×1000，均非股票语义；**可转债**：`vol` 是手（=10 张）、`trade_count` 是**真实笔数**，`Σvol` 与日线 `vol` **1:1** |
 | `get_minutes(symbols, *, date=None, sampling=False, concurrency=6)` | `list[MinuteBar]` | 跨市场分时（sampling=True 取缩略采样：A股由 0x122D 派生，扩展市场 0x254D） |
 
 #### 公司信息/文件/板块
@@ -102,7 +102,7 @@ from pytdxdata import (
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
-| `get_quotes(symbols, *, fields=None)` | `list[SecurityQuote]` | 五档报价；>80 只自动切批；TTL 5s |
+| `get_quotes(symbols, *, fields=None, concurrency=None, pipeline=True)` | `list[SecurityQuote]` | 五档报价；>80 只自动切批（流水线+工作窃取，5,200 只 ~0.33s）；TTL 5s |
 | `get_stock_quotes(stocks, bits=None)` | `list[MemberQuote]` | MAC 自定义字段报价（≤80只/次） |
 | `get_stock_quotes_list(category, *, start=0, count=80, sort_type=0)` | `list[MemberQuote]` | 市场分类报价（0沪A/2深A/6全A/8科创/14创业） |
 | `get_market_stat()` | `MarketStat` | 全市场统计（涨跌家数/总额/市值/涨跌停数） |
@@ -222,6 +222,21 @@ from pytdxdata import (
 | `FinancialRecord` | code/market/report_date/`fields: list[float]`（历史专业财报，注意与 `FinanceRecord` 区分） |
 
 > 注：`__init__` 仅导出 `Market/ExMarket/KlinePeriod/Adjust` 与 6 个核心模型；`BoardInfo/MemberQuote/AuctionItem` 等需 `from pytdxdata.models import ...`。
+
+**量纲对照（跨品种，2026-10-22 实测）**
+
+同名字段在不同品种上单位不同。最典型的坑是用 `amount / vol` 算均价——它在可转债上会**错 10 倍**：
+
+| 品种 | 分时 / 逐笔 `vol` | 日线 `SecurityBar.vol` | `Σ分时vol / 日线vol` | 日线 `amount / vol` |
+|---|---|---|---|---|
+| 股票 / ETF / LOF | 手（= 100 股） | 股 | **0.01** | 均价 ✓ |
+| 可转债（110/111/113/118/123/127/128） | 手（= 10 张） | **手** | **1.0** | 均价 **×10** ⚠️ |
+| 指数 | 百元（成交额/100） | 手 | — | 无意义（`amount` 是全板块口径） |
+
+算均价：股票 `amount / vol`；可转债 `amount / vol / 10`；跨品种统一用 `Σ(price×vol) / Σvol`。
+
+> 可转债的价格标度、分时、逐笔已全量校验（16 只当日 + 8 只历史日）：分时末价 / 快照现价、`Σvol / 日线vol`、逐笔 VWAP vs `amount/(vol×10)` 比值均为 **1.000000**。
+
 
 ## 四、辅助模块
 
