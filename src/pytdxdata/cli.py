@@ -38,6 +38,7 @@ from .api import TdxData
 from dataclasses import asdict
 
 from .models import Adjust, ExMarket, KlinePeriod, Market
+from .protocol.commands.quotes import price_decimal_digits
 
 PERIODS = {
     "min1": KlinePeriod.MIN_1, "min5": KlinePeriod.MIN_5, "min15": KlinePeriod.MIN_15,
@@ -107,6 +108,40 @@ def _pct(price: float, pre: float) -> str:
     return "%+.2f%%" % ((price / pre - 1) * 100)
 
 
+def _price_fmt(dp: int) -> str:
+    """按品种小数位生成右对齐格式串。
+
+    股票 2 位、**可转债/ETF 3 位**、债券/回购 4 位。固定写 ``%8.2f`` 会把
+    可转债的 128.891 打成 128.89（少一位有效报价）。
+    """
+    dp = max(0, min(int(dp or 2), 4))
+    return "%%%d.%df" % (6 + dp, dp)
+
+
+# 可转债后缀（解码 4 位，但交易所报价步长 0.001 元，第 4 位恒为 0）
+_CB_PREFIX = {1: ("110", "111", "113", "118"), 0: ("123", "127", "128")}
+
+
+def _display_dp(market: int, code: str) -> int:
+    """报价**显示**小数位。
+
+    注意 ``price_decimal_digits`` 给的是**解码位数**（原始整数 / 10**dp），
+    可转债是 4 位；但真实报价是 0.001 元的步长，第 4 位恒为 0，
+    按 4 位打印只会多一个 ``0``（``128.8920``）。
+    """
+    dp = price_decimal_digits(market, code)
+    if str(code).startswith(_CB_PREFIX.get(int(market), ())):
+        return 3
+    return dp
+
+
+def _dp_of(sym) -> int:
+    """Symbol -> 价格小数位（非 A 股/指数一律 2 位）。"""
+    if getattr(sym, "kind", "") == "cn":
+        return _display_dp(sym.market, sym.code)
+    return 2
+
+
 # ------------------------------------------------------------------ #
 # 各子命令
 # ------------------------------------------------------------------ #
@@ -120,24 +155,31 @@ async def cmd_quotes(td: TdxData, symbols: list[str]) -> None:
 def _print_quote(q) -> None:
     pct = (q.price / q.pre_close - 1) * 100 if q.pre_close else 0
     mkt = {31: "港股", 74: "美股"}.get(q.market, "")
+    if q.market in (0, 1):
+        dp = _display_dp(q.market, q.code)
+    else:
+        dp = getattr(q, "decimal_point", 2) or 2
     print("=" * 58)
     label = "%s %s" % (mkt, q.code) if mkt else "%s  %s" % (q.code, q.server_time or datetime.now().strftime("%H:%M:%S"))
     print(" %s" % label)
-    print(" 最新 %-10.2f  涨跌 %+8.2f (%+.2f%%)" % (q.price, q.price - q.pre_close, pct))
-    print(" 今开 %-10.2f  最高 %.2f  最低 %.2f" % (q.open, q.high, q.low))
-    print(" 昨收 %-10.2f  成交量 %s  成交额 %s" % (q.pre_close, _fmt_num(q.vol), _fmt_num(q.amount)))
+    print((" 最新 %-10.*f  涨跌 %+8.*f (%+.2f%%)" % (dp, q.price, dp, q.price - q.pre_close, pct)))
+    print((" 今开 %-10.*f  最高 %.*f  最低 %.*f" % (dp, q.open, dp, q.high, dp, q.low)))
+    print((" 昨收 %-10.*f  成交量 %s  成交额 %s" % (dp, q.pre_close, _fmt_num(q.vol), _fmt_num(q.amount))))
     if q.bid and q.ask:
         print(" " + "-" * 56)
+        pf = _price_fmt(dp)
         for i in range(max(len(q.bid), len(q.ask))):
             b = q.bid[i] if i < len(q.bid) else (0, 0)
             a = q.ask[i] if i < len(q.ask) else (0, 0)
-            print(" 买%-1d %8.2f %10s  |  卖%-1d %8.2f %10s" % (
+            print((" 买%-1d " + pf + " %10s  |  卖%-1d " + pf + " %10s") % (
                 i + 1, b[0], _fmt_num(b[1]), i + 1, a[0], _fmt_num(a[1])))
     print()
 
 
 async def cmd_kline(td: TdxData, sym: str, period: KlinePeriod, count: int,
                     start: int, adjust: Adjust) -> None:
+    s = parse_symbol(sym)
+    pf = _price_fmt(_dp_of(s))
     bars = await td.get_bars(sym, period, start=start, count=count, adjust=adjust)
     print("%s K线 (%s, %d根):" % (sym, period.name, len(bars)))
     print("  %-12s %8s %8s %8s %8s %12s" % ("日期", "开盘", "最高", "最低", "收盘", "成交量"))
@@ -145,30 +187,38 @@ async def cmd_kline(td: TdxData, sym: str, period: KlinePeriod, count: int,
         dt = "%04d-%02d-%02d" % (b.year, b.month, b.day)
         if b.hour:
             dt += " %02d:%02d" % (b.hour, b.minute)
-        print("  %-12s %8.2f %8.2f %8.2f %8.2f %12s" % (
+        print(("  %-12s " + " ".join([pf] * 4) + " %12s") % (
             dt, b.open, b.high, b.low, b.close, _fmt_num(b.vol)))
 
 
 async def cmd_transactions(td: TdxData, sym: str, count: int, date: int | None) -> None:
     s = parse_symbol(sym)
-    tx = await td.get_transactions(Market(s.market), s.code, date=date, count=count)
+    pf = _price_fmt(_dp_of(s))
+    tx = await td.get_ticks(sym, date=date, count=count)
     print("%s 逐笔成交 (%d条):" % (sym, len(tx)))
     print("  时间       价格     成交量   方向")
     for t in tx:
         bs = "买" if getattr(t, "bs_flag", 0) == 1 else "卖" if getattr(t, "bs_flag", 0) == 2 else "-"
-        tc = getattr(t, "trade_count", 0)
-        print("  %-10s %8.2f %10s   %s%s" % (t.time, t.price, _fmt_num(t.vol), bs,
-                                             " (%d笔)" % tc if tc else ""))
+        if not getattr(t, "trade_count_available", True):
+            tc = " (-)"          # 指数/ETF/LOF：协议不提供笔数
+        elif getattr(t, "trade_count", 0):
+            tc = " (%d笔)" % t.trade_count
+        else:
+            tc = ""
+        print(("  %-10s " + pf + " %10s   %s%s") % (
+            t.time, t.price, _fmt_num(t.vol), bs, tc))
 
 
 async def cmd_minute(td: TdxData, sym: str, date: int | None) -> None:
     s = parse_symbol(sym)
-    bars = await td.get_minute(Market(s.market), s.code, date=date)
+    pf = _price_fmt(_dp_of(s))
+    bars = await td.get_minutes(sym, date=date)
     print("%s 分时 (%d条):" % (sym, len(bars)))
     print("  时间       价格     均价    成交量")
-    for i, b in enumerate(bars):
-        print("  %02d:%02d %8.2f %8.2f %10s" % (
-            i // 60, i % 60, b.price, b.avg_price, _fmt_num(b.vol)))
+    for b in bars:
+        # 用 bar 自带时间：早期按序号推算会打成 00:00~03:59
+        print(("  %02d:%02d " + pf + " " + pf + " %10s") % (
+            b.hour, b.minute, b.price, b.avg_price, _fmt_num(b.vol)))
 
 
 async def cmd_board(td: TdxData, args) -> None:

@@ -5,6 +5,7 @@ import struct
 
 from ..._binary import unpack_from
 from ...models import TransactionRecord
+from ...symbols import has_order_count
 from ..datetime_ import get_time
 from ..mac_frame import build_mac_request
 from ..price import get_price
@@ -32,6 +33,8 @@ class GetTransactionDataCmd(BaseCommand[list[TransactionRecord]]):
         pos = 2
         last_price = 0
         records: list[TransactionRecord] = []
+        code = self.code.decode("utf-8")
+        has_tc = has_order_count(self.market, code)
         for _ in range(num):
             hour, minute, pos = get_time(body, pos)
             price_diff, pos = get_price(body, pos)
@@ -41,10 +44,12 @@ class GetTransactionDataCmd(BaseCommand[list[TransactionRecord]]):
             _unknown, pos = get_price(body, pos)
             last_price += price_diff
             records.append(TransactionRecord(
-                market=self.market, code=self.code.decode("utf-8"),
+                market=self.market, code=code,
                 time=f"{hour:02d}:{minute:02d}:00",
                 price=last_price / 100.0, vol=float(vol),
-                trade_count=int(num_orders), bs_flag=bs_flag,
+                # 指数/ETF/LOF 该字段是「价格×1000」占位，不是笔数
+                trade_count=int(num_orders) if has_tc else 0,
+                bs_flag=bs_flag, trade_count_available=has_tc,
             ))
         return records
 
@@ -68,6 +73,7 @@ class GetHistoryTransactionDataCmd(BaseCommand[list[TransactionRecord]]):
         pos = 6  # 2(num) + 4(skip)
         last_price = 0
         records: list[TransactionRecord] = []
+        code = self.code.decode("utf-8")
         for _ in range(num):
             hour, minute, pos = get_time(body, pos)
             price_diff, pos = get_price(body, pos)
@@ -76,10 +82,11 @@ class GetHistoryTransactionDataCmd(BaseCommand[list[TransactionRecord]]):
             _unknown, pos = get_price(body, pos)
             last_price += price_diff
             records.append(TransactionRecord(
-                market=self.market, code=self.code.decode("utf-8"),
+                market=self.market, code=code,
                 time=f"{hour:02d}:{minute:02d}:00",
                 price=last_price / 100.0, vol=float(vol),
-                trade_count=0, bs_flag=bs_flag,   # 历史无笔数
+                trade_count=0, bs_flag=bs_flag,
+                trade_count_available=False,   # 历史通道整条链路都没有笔数字段
             ))
         return records
 
@@ -108,6 +115,7 @@ class MacTransactionCmd(BaseCommand[list[TransactionRecord]]):
     def parse_response(self, body: bytes) -> list[TransactionRecord]:
         (count,) = unpack_from("<H", body, 29, "mac transaction count")
         records: list[TransactionRecord] = []
+        has_tc = has_order_count(self.market, self.code)
         for i in range(count):
             offset = 39 + i * 18
             try:
@@ -124,6 +132,8 @@ class MacTransactionCmd(BaseCommand[list[TransactionRecord]]):
                 market=self.market, code=self.code,
                 time=f"{h:02d}:{m:02d}:{s:02d}",
                 price=price, vol=float(volume),
-                trade_count=int(trade_count), bs_flag=bs_flag,
+                # 指数/ETF/LOF 该字段是「价格×1000」占位，不是笔数
+                trade_count=int(trade_count) if has_tc else 0,
+                bs_flag=bs_flag, trade_count_available=has_tc,
             ))
         return records

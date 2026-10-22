@@ -142,7 +142,7 @@ await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 | 全市场标的清单（A股+港股+期货…） | `get_universe(market=None)` |
 | 日/周/月/分钟 K 线（任意市场） | `get_bars(symbols, period, *, count, adjust, start_date, end_date)` |
 | K 线 + MACD/KDJ/RSI/BOLL | `get_indicators(symbols, indicators, ...)` |
-| 实时五档报价（A股）/ 基础报价（港股/美股/期货） | `get_quotes(symbols, *, fields=None)` |
+| 实时五档报价（A股）/ 基础报价（港股/美股/期货） | `get_quotes(symbols, *, fields=None, pipeline=True)` |
 | 逐笔成交（任意市场） | `get_ticks(symbols, *, date)` |
 | 分时图 / 缩略采样 | `get_minutes(symbols, *, date, sampling=True)` |
 | 全市场股票列表（缓存 1 天） | `get_universe("sz")` / `get_universe("sh")` |
@@ -169,8 +169,16 @@ await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 - **K 线时间戳统一为北京时间**（v0.6.2 起）。美股原始报文里日期是美东交易日、时分是北京时间（两个时区拼在一起），库已自动归一化，`bar.datetime` 可直接排序 / 比较 / 过滤。但**美股一个交易日横跨两个北京自然日**，按交易日聚合（分钟线合成日线、日内统计）必须用 `bar.trading_date`。
 - **`count` 很大时会自动多连接并发分页**，无需手动翻页。但标准通道 K 线 `count < 100` 部分服务器会返回空——内部已强制 `min_page=100` 规避。
 - **`get_quotes` 一次 >80 只自动切批**；走 MAC 字段位通道（`fields=`）时上限为 80 只/次。
+- **全市场报价用默认参数即可，别自己写循环**。`get_quotes(全部A股)` 内部会切 66 片并走**单连接流水线**（一条连接连发多个分片、只付一次往返）+ 工作窃取调度，5,227 只实测 **p50 325ms**（老版本串行 3.5s）。自己 for 循环逐只/逐片调会把流水线优势全部丢掉。
+  - 想更保守可 `concurrency=11`（每台 1 连接），代价 p50 457ms。
+  - 个别服务器不支持流水线时自动降级逐片，结果不受影响。
+- **可转债（110/111/113/118/123/127/128）三样都是真的**：价格、`vol`（手=10 张）、`trade_count`（真实笔数，3631 条切片 / 20443 笔量级）全部可用，`Σvol` 与日线 `vol` **1:1 相等**。
+  ⚠️ 唯一要小心的是 **日线 `amount / vol` 不等于均价，而是均价的 10 倍**（`vol` 单位是手=10 张）。算可转债均价用 `amount / vol / 10`，或直接用 `Σ(price×vol) / Σvol`——后者跨品种都成立，最稳。
+  对照：股票/ETF 的 `Σ逐笔vol / 日线vol = 0.01`（逐笔手、日线股），而 `amount/vol` 恰好就是均价。
 - **指数本身没有成交笔数**。`get_ticks("sh000001")` 的 `trade_count` 是「当时均价×1000」、`vol` 单位是百元（成交额/100）。要笔数只能用 `get_index_trade_stats(index)`（成分股逐笔累加，2230 只约 36-60 s）。北交所成分无笔数字段，该方法会返回 `trade_count_available=False`。
+- **ETF / LOF 也没有成交笔数**。`get_ticks("sh510310")` 的 `trade_count` 是「价格×1000」（货币 ETF 恒为 0）。判定用 `symbols.has_order_count(market, code)`，读记录时看 `TransactionRecord.trade_count_available`——为 `False` 时 `trade_count` 已被置 0，不要求和/求均值。注意**沪市 `501x/502x/506x` 实测有真实笔数**，不能按「5 开头=基金」一刀切。
 - **历史逐笔有笔数**（MAC `0x122F` 支持历史日期，实测可回溯最近 5 个交易日；更早返回空）。
+- **小数位表不用手动管，但可以手动刷**。`start()` 会检查当日缓存并后台同步一次（`SecurityInfo.decimal_point` 权威值）；要强制刷新用 `await td.sync_decimal_points()`，看同步状态用 `await td.decimal_point_status()`。`PYPYTDX_DATA_DISABLE_DECIMAL_SYNC=1` 可关闭后台同步。
 - 板块文件（`block_*.dat`）/ 行业（`tdxhy.cfg`）/ 财报（`gpcw*.zip`）是**服务器上的静态文件**，解析后是普通 dataclass，**落 JSON 后完全脱网可用**——适合做离线快照。
 
 ## 陷阱清单
@@ -189,6 +197,7 @@ await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 | 港股/美股五档 bid/ask | 没有（协议不支持） | `fields` 字段位通道有 name 但无五档 |
 | 美股分钟线用 `datetime.date()` 分组做日聚合 | 一个交易日被拆成两天（美股跨北京零点） | 用 `bar.trading_date`；`bar.datetime` 是归一化后的北京时间 |
 | 拿指数逐笔的 `trade_count` 当笔数 | 拿到的是「均价×1000」，数值荒谬 | 用 `get_index_trade_stats(index)` 由成分累加 |
+| 拿 ETF/LOF 逐笔的 `trade_count` 当笔数 | 拿到的是「价格×1000」（`sh510310` 显示 3994 笔） | 看 `trade_count_available`，或 `symbols.has_order_count()` |
 | 拿深市 `399xxx` 的 `amount` 校验成分合计 | 比值 0.43，误以为数据错 | 深市指数 amount 是**全板块**口径（`sz399001`=深市全部 5081 亿），不是样本股 |
 | 依赖实时性做信号 | 数据是 15 分钟前的 | 换券商实时源 |
 | 手动改包内 `servers.json` / 写死 IP | 容器只读、升级被覆盖、快节点捞不回来 | 日常靠内置的**当日测速缓存**自动选路；要强制指定就用 `PYPYTDX_DATA_{STANDARD,MAC,EX}_HOSTS` 环境变量 |

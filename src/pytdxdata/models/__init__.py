@@ -117,8 +117,8 @@ class SecurityBar:
     high: float
     low: float
     close: float
-    vol: float      # 股票=股 / 转债=手（与vipdoc一致）
-    amount: float   # 元
+    vol: float      # 股票=股 / 转债=手（1 手=10 张，与 vipdoc 一致）
+    amount: float   # 元。⚠️ amount/vol 只在股票上等于均价；转债还要再 /10（手=10张）
     year: int
     month: int
     day: int
@@ -247,17 +247,42 @@ class TransactionRecord:
     - ``trade_count`` **不是笔数**，而是**当时均价 × 1000**（实测 tc/1000 与分时
       ``avg_price`` 的差 < 1.1）。指数没有「成交笔数」概念。
     - ``bs_flag`` 语义不成立（实测返回 2，而模型只定义 0=卖 / 1=买）。
+
+    **场内基金同样没有笔数**（ETF / 多数 LOF，见
+    :func:`~pytdxdata.symbols.has_order_count`）：
+
+    - ``trade_count`` 是 ``价格 × 1000``（实测 ``sh510310`` 收盘 tc=3994，
+      当时价 3.989 → 3989，偏差 σ≈2；货币 ETF ``sh511990`` 恒为 0）。
+    - ``vol`` 仍是**手**，``bs_flag`` 正常。
+    - 这类标的的 :attr:`trade_count_available` 为 ``False``，``trade_count`` 已被
+      置 ``0``，不要拿去求和/求均值。
+
+    ``trade_count_available=False`` 表示该品种**协议上就不带笔数**，
+    与「本切片恰好 0 笔」不是一回事。
+
+    **可转债（110/111/113/118/123/127/128/132）三样都是真的**（实测 2026-10-22，
+    16 只 A股可转债当日 + 8 只历史日全部自洽）：
+
+    - ``vol`` 单位是**手**（1 手 = 10 张），与股票逐笔一致；``trade_count`` 是**真实成交笔数**
+      （``sh111000`` 3631 条切片 / 20443 笔，可转债在
+      :func:`~pytdxdata.symbols.has_order_count` 里判为**可用**）。
+    - ``Σvol`` 与**日线** ``SecurityBar.vol`` **1:1 相等**（比值 1.000000）——
+      这点和股票相反：股票逐笔是「手」、日线是「股」，Σ比值是 **0.01**。
+    - ⚠️ 但**日线** ``amount / vol`` **不等于**均价，而是均价的 **10 倍**（``vol`` 的「手」= 10 张）。
+      要算可转债均价须用 ``amount / vol / 10``；股票则是 ``amount / vol`` 直接就对。
+      实测：``sz127025`` 逐笔 VWAP 105.9063 vs ``amount/vol`` 1059.0957，比值 10.0003。
     """
 
     market: int
     code: str
     time: str           # HH:MM:SS（扩展市场为 HH:MM）
     price: float
-    vol: float          # 股票=手；指数=百元（成交额/100），见类注释
-    trade_count: int    # 股票=笔数增量；指数=均价×1000，见类注释
+    vol: float          # 股票/转债=手；指数=百元（成交额/100），见类注释
+    trade_count: int    # 股票=笔数增量；指数/基金=占位值，见类注释
     bs_flag: int        # 1=主动买 0=主动卖 2=中性 5=盘后固定价（指数语义不成立）
     symbol: str = ""
     fields: dict[str, float] = field(default_factory=dict)  # 扩展市场额外字段（增仓等）
+    trade_count_available: bool = True  # 指数/ETF/LOF 为 False（协议无笔数字段）
 
 
 @dataclass(slots=True)
@@ -268,7 +293,7 @@ class MinuteBar:
     :attr:`datetime` / :attr:`trading_date`，不要自己拿 ``hour`` 拼日期。
     """
     price: float
-    vol: float
+    vol: float               # 手（股票/转债同）；Σ分时vol 与当日日线 vol 同口径
     avg_price: float = 0.0   # 均价(协议第2字段)
     hour: int = 0
     minute: int = 0

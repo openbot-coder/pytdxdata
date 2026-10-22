@@ -59,6 +59,11 @@ class PooledConnection:
         self.last_used = time.monotonic()
         return await self.conn.execute(cmd)
 
+    async def execute_pipeline(self, cmds, *, timeout: float | None = None):
+        """在同一条连接上流水线执行多条命令（见 TdxConnection.execute_pipeline）。"""
+        self.last_used = time.monotonic()
+        return await self.conn.execute_pipeline(cmds, timeout=timeout)
+
     async def close(self) -> None:
         self.alive = False
         try:
@@ -272,6 +277,46 @@ class DynamicPool:
             and self._server_count.get(h, 0) > 0
         ]
         return random.choice(alive) if alive else None
+
+    async def warm(self, n: int) -> None:
+        """并发预建连接至 ``n`` 条（最多到 ``max_size``）。
+
+        :meth:`acquire` 建连时持有池锁，**一次只能建一条**——22 路并发首次
+        调用会排队 22×握手时间（实测全市场首拉多花 5~6s）。大批量请求前先调
+        本方法把连接并发建好，首拉只多付一次握手。
+
+        失败静默忽略：缺的连接后续由 ``acquire`` 按需补齐。
+        """
+        if self._closed:
+            return
+        need = min(n, self.max_size) - self._total
+        if need <= 0:
+            return
+
+        # 用局部计数挑 host，避免并发建连时反复选中同一台
+        counts = dict(self._server_count)
+        ranked = self.health.rank(self.servers)
+        hosts: list[str] = []
+        for _ in range(need):
+            host = next((h for h in ranked
+                         if not self.health.in_cooldown(h)
+                         and counts.get(h, 0) < self.per_server_cap), None)
+            if host is None:
+                break
+            hosts.append(host)
+            counts[host] = counts.get(host, 0) + 1
+        if not hosts:
+            return
+
+        results = await asyncio.gather(
+            *(self._new_conn(h) for h in hosts), return_exceptions=True)
+        async with self._lock:
+            for pc in results:
+                if isinstance(pc, PooledConnection):
+                    self._total += 1
+                    self.stats.total = self._total
+                    if not self._closed and pc.alive:
+                        self._idle.append(pc)
 
     async def release(self, pc: PooledConnection, *, broken: bool = False) -> None:
         if self.stats.borrowed > 0:

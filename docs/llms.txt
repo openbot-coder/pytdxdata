@@ -47,12 +47,12 @@ asyncio.run(main())
 - **标的清单**：`get_universe`（A股 + 港股 + 美股 + 期货/期权）
 - **K 线**：`get_bars`（自动并发分页、支持复权与日期区间、多标的并发）
 - **技术指标**：`get_indicators`（K线 + MACD/KDJ/RSI/BOLL/MA/EMA）
-- **报价**：`get_quotes`（五档，>80 只自动切批）、`get_snapshot`（个股特征）、`get_market_stat`
+- **报价**：`get_quotes`（五档，>80 只自动切批；**单连接流水线**默认开启，全市场 5,200 只 A股 ~0.33s）、`get_snapshot`（个股特征）、`get_market_stat`
   - 价格标度：协议给的是整数，真实价 = `整数 / 10**小数位`。小数位由 `price_decimal_digits` 决定，
     优先用**权威表**（证券清单自带的 `SecurityInfo.decimal_point`，`start()` 每日后台同步一次，
     也可 `await td.sync_decimal_points()` 强制刷新），未同步时退回静态前缀规则。
     债券/回购是 **4 位**、沪市 B 股 3 位 —— 这里错过两次（整批价格差 100 倍/10 倍）。
-- **逐笔 / 分时**：`get_ticks`（含 `trade_count`，支持历史日期，返回按时间升序；`vol`/`trade_count` 为约 3 秒切片增量而非累计；已剔除 `bs_flag=8` 竞价委托；**指数**的 `vol` 是百元、`trade_count` 是均价×1000）、`get_minutes`（`sampling=True` 取缩略采样；`hour` 恒为合法时钟值 0~23，美股一个交易日跨两个北京自然日，按交易日聚合用 `MinuteBar.trading_date`、取时刻用 `MinuteBar.datetime`）
+- **逐笔 / 分时**：`get_ticks`（含 `trade_count`，支持历史日期，返回按时间升序；`vol`/`trade_count` 为约 3 秒切片增量而非累计；已剔除 `bs_flag=8` 竞价委托；**指数**的 `vol` 是百元、`trade_count` 是均价×1000；**可转债**的 `vol` 是手=10 张、`trade_count` 是真实笔数，故日线 `amount/vol` 是均价的 **10 倍**，算均价要再 /10）、`get_minutes`（`sampling=True` 取缩略采样；`hour` 恒为合法时钟值 0~23，美股一个交易日跨两个北京自然日，按交易日聚合用 `MinuteBar.trading_date`、取时刻用 `MinuteBar.datetime`）
 - **财务 / 除权**：`get_finance`（最新快照）、`get_xdxr`、`get_price_limits`（本地计算涨跌停）
 - **F10**：`get_f10`（公司资料目录 + 正文）
 - **板块**：`get_boards`、`get_board_members`、`get_board_of`、`get_board_summary`、
