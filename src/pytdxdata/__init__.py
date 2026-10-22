@@ -7,16 +7,18 @@ from .models import (
     Adjust,
     ExMarket,
     FinanceRecord,
+    IndexTradeStats,
     KlinePeriod,
     Market,
     MinuteBar,
+    MinuteTradeStat,
     SecurityBar,
     SecurityQuote,
     TransactionRecord,
     XdxrRecord,
 )
 
-__version__ = "0.6.4"
+__version__ = "0.6.5"
 __all__ = [
     "TdxData",
     "Market",
@@ -27,6 +29,8 @@ __all__ = [
     "SecurityQuote",
     "TransactionRecord",
     "MinuteBar",
+    "MinuteTradeStat",
+    "IndexTradeStats",
     "XdxrRecord",
     "FinanceRecord",
     "__version__",

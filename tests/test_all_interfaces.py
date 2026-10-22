@@ -457,6 +457,24 @@ async def test_boards(td):
     assert isinstance(chg, list)
 
 
+async def test_index_trade_stats(td):
+    """指数成分成交汇总：成分 → 逐笔 → 每分钟量/笔数。"""
+    for name in ("get_index_members", "get_index_trade_stats",
+                 "get_index_trade_stats_multi"):
+        _use(name)
+    mem = await td.get_index_members("000016")
+    assert isinstance(mem, list) and mem and mem[0].symbol
+    st = await td.get_index_trade_stats("000016")
+    assert st.index == "sh000016"
+    assert st.member_count >= 1
+    assert st.minutes and st.minutes[0].time == "09:30"
+    assert st.total_trade_count >= 1
+    assert st.cum_trade_count()[-1][1] == st.total_trade_count
+    multi = await td.get_index_trade_stats_multi("000016", [20261020, None])
+    assert len(multi) == 2
+    assert multi[0].date == 20261020 and multi[1].date is None
+
+
 # --------------------------------------------------------------------------- #
 # 六、服务器文件
 # --------------------------------------------------------------------------- #

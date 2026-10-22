@@ -81,6 +81,9 @@ from pytdxdata import (
 | `get_boards(kind="all", *, count=10000)` | `list[BoardInfo]` | 板块列表 |
 | `get_board_members(board, *, fields=None, count=100000)` | `list[SecurityQuote]` | 板块成分股报价（归一模型） |
 | `get_board_of(symbols)` | `list[BelongBoard]` | 个股所属板块 |
+| `get_index_members(index, *, fields=None, count=100000)` | `list[SecurityQuote]` | **指数成分股**报价。裸 6 位按**指数语义**解析（`000001`=上证指数，不是平安银行）：`000/999/880`→沪、`399`→深、`899`→北交所 |
+| `get_index_trade_stats(index, date=None, *, concurrency=24, batch_size=50, members=None, skip_errors=True, on_progress=None)` | `IndexTradeStats` | **指数成分逐笔汇总**成每分钟成交量/成交笔数。协议里指数本身没有笔数（`trade_count` 是均价×1000），故由成分股逐笔累加；`.cumulative()` 取「截止该分钟累计」，`.cum_trade_count()` 直接给 `[(HH:MM, 累计笔数)]`。2230 只（上证）约 36-60 s |
+| `get_index_trade_stats_multi(index, dates, *, ...)` | `list[IndexTradeStats]` | 多日批量版（成分只请求一次），用于「近 N 日同时点累计均值」基准 |
 
 ### 2.2 K线（旧接口，共 6 个） {#legacy-kline}
 
@@ -199,7 +202,7 @@ from pytdxdata import (
 | `SecurityQuote` | price/pre_close/OHLC/vol/amount/s_vol/b_vol/`bid[5]`/`ask[5]`/server_time/trading_status/cur_vol/rise_speed/limit_up/limit_down/decimal_point/open_amount |
 | `SecurityInfo` | market/code/name/volunit/decimal_point/pre_close |
 | `TransactionRecord` | market/code/time/price/vol/`trade_count`/bs_flag |
-| `MinuteBar` | price/vol/avg_price/hour/minute |
+| `MinuteBar` | price/vol/avg_price/hour/minute/day_offset + `datetime`/`trading_date` 只读属性（hour 恒为合法时钟值 0~23；美股一个交易日跨两个北京自然日，按交易日聚合用 `trading_date`） |
 | `XdxrRecord` | 分红送转/配股/缩股/行权 + 股本变动 + `date` 属性 |
 | `FinanceRecord` | 股本/资产/负债/营收/利润等 36 个字段（万元/万股） |
 | `BoardInfo` | 板块 + 领涨股信息 |

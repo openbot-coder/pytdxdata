@@ -337,7 +337,37 @@ def test_finish_bars_sorts_us_session_chronologically():
     (0, "000001", 2),   # 平安银行（不是指数！）
     (0, "300750", 2),
     (0, "159915", 3),   # 深市 ETF
-    (0, "128035", 3),   # 深市转债
+    # 债券/回购：2026-10-22 修正（沪市曾少 100 倍、深市曾少 10 倍）
+    (1, "019742", 4),   # 沪市国债 24特国01（110.228，曾读成 11022.8）
+    (1, "019547", 4),   # 沪市国债
+    (1, "010706", 4),   # 沪市老国债 07国债06
+    (1, "018014", 4),   # 沪市 018 段
+    (1, "020812", 4),   # 沪市贴债
+    (1, "110077", 4),   # 沪市可转债 洪城转债（199.279，曾读成 19927.9）
+    (1, "113616", 4),   # 沪市可转债 韦尔转债
+    (1, "118031", 4),   # 沪市可转债
+    (1, "111000", 4),   # 沪市 111 段
+    (1, "132024", 4),   # 沪市可交换债
+    (1, "184832", 4),   # 沪市 184 段
+    (1, "204001", 4),   # 沪市国债逆回购 GC001（1.385，曾读成 138.5）
+    (1, "204028", 4),
+    (0, "123107", 4),   # 深市可转债 温氏转债（112.189，曾读成 1121.89）
+    (0, "128136", 4),   # 深市可转债 立讯转债
+    (0, "127025", 4),   # 深市可转债
+    (0, "131810", 4),   # 深市国债逆回购 R-001（1.38，曾读成 13.8）
+    (0, "148004", 4),   # 深市 148 段
+    (0, "112001", 4),   # 深市公司债
+    (0, "101917", 4),   # 深市国债
+    (0, "520261", 4),   # 深市 520 段
+    # 沪市 B 股：3 位（2026-10-22 修正，曾按 2 位少 10 倍）
+    (1, "900901", 3),   # 云赛Ｂ股
+    (1, "900948", 3),
+    # 深市 B 股：2 位（与沪市不同！）
+    (0, "200011", 2),   # 深物业B
+    (0, "200488", 2),
+    # 边界：999xxx 是「指数」，不能被 9 开头当成 B 股
+    (1, "999999", 2),   # 上证指数
+    (1, "999998", 2),   # Ａ股指数
 ])
 def test_price_decimal_digits(market, code, expect):
     assert price_decimal_digits(market, code) == expect
@@ -345,3 +375,82 @@ def test_price_decimal_digits(market, code, expect):
 
 def test_price_decimal_digits_strips_nul():
     assert price_decimal_digits(1, "000016\x00\x00") == 2
+
+
+# ---------- 美股分时跨日：hour 必须是合法时钟值（回归：曾出现 hour=27） ----------
+
+def _us_minutes(n: int = 390) -> list:
+    """构造 usAAPL 的 390 条分时：从北京 21:30 起连续 n 分钟。"""
+    from pytdxdata.models import MinuteBar
+
+    start = 21 * 60 + 30
+    return [
+        MinuteBar(price=100.0 + i * 0.01, vol=1.0,
+                  hour=(start + i) // 60, minute=(start + i) % 60,
+                  market=74, code="AAPL", date=20261022)
+        for i in range(n)
+    ]
+
+
+def test_minute_bar_us_hour_is_valid_clock_value():
+    """EX 分时的 minutes 是「自开盘起的连续分钟数」，直接 //60 会得到 hour=27。"""
+    bars = _us_minutes()
+    assert all(0 <= b.hour < 24 for b in bars)
+    # 归一化前的原始值确实越界（21:30 + 390min = 28:00）
+    assert max(b.hour + b.day_offset * 24 for b in bars) > 23
+
+
+def test_minute_bar_us_day_offset_marks_next_day():
+    bars = _us_minutes()
+    assert bars[0].day_offset == 0          # 21:30 当晚
+    assert bars[-1].day_offset == 1         # 03:59 次日
+    assert (bars[-1].hour, bars[-1].minute) == (3, 59)
+
+
+def test_minute_bar_us_datetime_is_monotonic_across_midnight():
+    bars = _us_minutes()
+    dts = [b.datetime for b in bars]
+    assert dts == sorted(dts)
+    assert dts[0] == datetime(2026, 10, 22, 21, 30)
+    assert dts[-1] == datetime(2026, 10, 23, 3, 59)
+
+
+def test_minute_bar_us_trading_date_spans_two_calendar_days():
+    """一个美股交易日的分时横跨两个北京自然日，trading_date 必须都是同一天。"""
+    bars = _us_minutes()
+    tds = {b.trading_date for b in bars}
+    assert tds == {"2026-10-22"}
+    # 而 datetime.date() 会给出两天 —— 这正是不能用它的原因
+    assert len({b.datetime.date() for b in bars}) == 2
+
+
+def test_minute_bar_cn_unchanged():
+    """A股/港股分时 hour 本就合法，归一化必须零行为变化。"""
+    from pytdxdata.models import MinuteBar
+
+    for hour, minute in ((9, 30), (11, 29), (13, 0), (14, 59)):
+        b = MinuteBar(price=10.0, vol=1.0, hour=hour, minute=minute,
+                      market=1, code="600000", date=20261022)
+        assert (b.hour, b.minute) == (hour, minute)
+        assert b.day_offset == 0
+        assert b.datetime == datetime(2026, 10, 22, hour, minute)
+        assert b.trading_date == "2026-10-22"
+
+
+def test_minute_bar_cn_datetime_monotonic_full_session():
+    """A股全天 240 条（09:30~11:29 + 13:00~14:59）时间轴严格递增。"""
+    from pytdxdata.models import MinuteBar
+
+    bars = []
+    for idx in range(240):
+        if idx < 120:
+            hour, minute = 9 + (30 + idx) // 60, (30 + idx) % 60
+        else:
+            hour, minute = 13 + (idx - 120) // 60, (idx - 120) % 60
+        bars.append(MinuteBar(price=10.0, vol=1.0, hour=hour, minute=minute,
+                              market=1, code="600000", date=20261022))
+    dts = [b.datetime for b in bars]
+    assert dts == sorted(dts)
+    assert dts[0] == datetime(2026, 10, 22, 9, 30)
+    assert dts[-1] == datetime(2026, 10, 22, 14, 59)
+    assert {b.trading_date for b in bars} == {"2026-10-22"}

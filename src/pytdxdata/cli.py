@@ -8,6 +8,7 @@
   tdx transactions sz000001 --count 50   # 逐笔成交
   tdx minute sz000001                    # 分时(今日/历史--date)
   tdx index 000001 --count 30            # 指数K线
+  tdx index-stats 000300 --top 10        # 指数成分成交汇总(每分钟成交量/笔数)
   tdx board list [--type 1]              # 板块列表(0全部/1行业/2概念)
   tdx board members 881001 --count 20    # 板块成分
   tdx board ranking [--top 10]           # 板块涨跌幅排行
@@ -204,6 +205,43 @@ async def cmd_board(td: TdxData, args) -> None:
             print("  %-12s %+8.2f%%" % (r.get("name", ""), r.get("change_pct", 0)))
 
 
+async def cmd_index_stats(td: TdxData, index: str, date: int | None,
+                          show_all: bool, top: int, concurrency: int) -> None:
+    """指数成分成交汇总：每分钟成交量 / 笔数（笔数=成分股逐笔累加）。"""
+    total = 0
+
+    def on_progress(done: int, all_: int) -> None:
+        nonlocal total
+        total = all_
+        print("\r  拉取成分逐笔 %d/%d ..." % (done, all_), end="", file=sys.stderr,
+              flush=True)
+
+    st = await td.get_index_trade_stats(
+        index, date, concurrency=concurrency, on_progress=on_progress)
+    if total:
+        print("\r" + " " * 40 + "\r", end="", file=sys.stderr, flush=True)
+
+    print("%s 成分成交汇总" % st.index)
+    print("  成分 %d 只 / 有成交 %d 只 / 有笔数 %d 只%s" % (
+        st.member_count, st.active_members, st.trade_count_members,
+        "" if st.trade_count_available else "  ★该指数无笔数口径"))
+    print("  成交量 %s 手   成交笔数 %s 笔   成交额 %.2f 亿   耗时 %.1fs" % (
+        _fmt_num(st.total_volume),
+        _fmt_num(st.total_trade_count) if st.trade_count_available else "-",
+        st.total_amount / 1e8, st.elapsed))
+    if st.failed_members:
+        print("  （%d 只成分逐笔拉取失败，已跳过）" % st.failed_members)
+    print()
+    print("  时间    累计成交量    累计笔数")
+    rows = st.cumulative()
+    if not show_all:
+        rows = rows[-top:]
+    for m in rows:
+        print("  %-6s %12s %12s" % (
+            m.time, _fmt_num(m.volume),
+            _fmt_num(m.trade_count) if st.trade_count_available else "-"))
+
+
 async def cmd_info(td: TdxData, sym: str) -> None:
     s = parse_symbol(sym)
     info = await td.get_symbol_info(Market(s.market), s.code)
@@ -389,6 +427,17 @@ def main() -> None:
     ix.add_argument("--count", type=int, default=30)
     ix.set_defaults(func=lambda td, a: cmd_kline(
         td, a.code, KlinePeriod.DAY, a.count, 0, Adjust.NONE))
+
+    ist = add("index-stats", "指数成分成交汇总（每分钟成交量/笔数）")
+    ist.add_argument("index", help="指数代码，如 000300 / 000001 / sh000016")
+    ist.add_argument("--date", type=str, default=None, help="YYYYMMDD，缺省=当日")
+    ist.add_argument("--top", type=int, default=10, help="只显示最后 N 分钟（默认10）")
+    ist.add_argument("--all", dest="show_all", action="store_true",
+                     help="显示全部分钟")
+    ist.add_argument("--concurrency", type=int, default=24, help="逐笔并发数")
+    ist.set_defaults(func=lambda td, a: cmd_index_stats(
+        td, a.index, int(a.date) if a.date else None,
+        a.show_all, a.top, a.concurrency))
 
     b = add("board", "板块")
     b.add_argument("action", choices=["list", "members", "ranking", "change"])

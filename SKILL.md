@@ -149,6 +149,8 @@ await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 | 除权除息 / 财务快照 | `get_xdxr(symbols)` / `get_finance(symbols)` |
 | F10 公司资料 | `get_f10(symbol, section)` |
 | 板块列表 / 成分股 / 涨跌排行 | `get_boards` / `get_board_members` / `get_board_ranking` |
+| **指数的成交量 + 成交笔数**（每分钟曲线） | `get_index_trade_stats(index, date)` → `.cum_trade_count()` |
+| **指数成分股** | `get_index_members(index)`（裸 `000001` 按指数语义解析） |
 | 个股所属板块 | `get_board_of(symbols)` |
 | 集合竞价 / 异动 / 资金流 | `get_auction` / `get_unusual` / `get_capital_flow` |
 | 个股特征快照 | `get_snapshot(symbols)` |
@@ -167,7 +169,8 @@ await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 - **K 线时间戳统一为北京时间**（v0.6.2 起）。美股原始报文里日期是美东交易日、时分是北京时间（两个时区拼在一起），库已自动归一化，`bar.datetime` 可直接排序 / 比较 / 过滤。但**美股一个交易日横跨两个北京自然日**，按交易日聚合（分钟线合成日线、日内统计）必须用 `bar.trading_date`。
 - **`count` 很大时会自动多连接并发分页**，无需手动翻页。但标准通道 K 线 `count < 100` 部分服务器会返回空——内部已强制 `min_page=100` 规避。
 - **`get_quotes` 一次 >80 只自动切批**；走 MAC 字段位通道（`fields=`）时上限为 80 只/次。
-- **历史逐笔没有笔数字段**，只有当日逐笔的 `trade_count` 有效。
+- **指数本身没有成交笔数**。`get_ticks("sh000001")` 的 `trade_count` 是「当时均价×1000」、`vol` 单位是百元（成交额/100）。要笔数只能用 `get_index_trade_stats(index)`（成分股逐笔累加，2230 只约 36-60 s）。北交所成分无笔数字段，该方法会返回 `trade_count_available=False`。
+- **历史逐笔有笔数**（MAC `0x122F` 支持历史日期，实测可回溯最近 5 个交易日；更早返回空）。
 - 板块文件（`block_*.dat`）/ 行业（`tdxhy.cfg`）/ 财报（`gpcw*.zip`）是**服务器上的静态文件**，解析后是普通 dataclass，**落 JSON 后完全脱网可用**——适合做离线快照。
 
 ## 陷阱清单
@@ -185,6 +188,8 @@ await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 | 循环里逐个 `await get_bars` | 慢 | 用列表传多个标的，自动并发 |
 | 港股/美股五档 bid/ask | 没有（协议不支持） | `fields` 字段位通道有 name 但无五档 |
 | 美股分钟线用 `datetime.date()` 分组做日聚合 | 一个交易日被拆成两天（美股跨北京零点） | 用 `bar.trading_date`；`bar.datetime` 是归一化后的北京时间 |
+| 拿指数逐笔的 `trade_count` 当笔数 | 拿到的是「均价×1000」，数值荒谬 | 用 `get_index_trade_stats(index)` 由成分累加 |
+| 拿深市 `399xxx` 的 `amount` 校验成分合计 | 比值 0.43，误以为数据错 | 深市指数 amount 是**全板块**口径（`sz399001`=深市全部 5081 亿），不是样本股 |
 | 依赖实时性做信号 | 数据是 15 分钟前的 | 换券商实时源 |
 | 手动改包内 `servers.json` / 写死 IP | 容器只读、升级被覆盖、快节点捞不回来 | 日常靠内置的**当日测速缓存**自动选路；要强制指定就用 `PYPYTDX_DATA_{STANDARD,MAC,EX}_HOSTS` 环境变量 |
 
