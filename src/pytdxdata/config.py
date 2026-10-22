@@ -33,6 +33,7 @@ _SERVERS_FILE = Path(__file__).resolve().parent / "servers.json"  # 包内清单
 # 当日测速缓存（结构变更时递增，旧版本缓存自动失效）
 PROBE_CACHE_VERSION = 1
 _PROBE_CACHE_NAME = "hosts-today.json"
+_DECIMAL_CACHE_NAME = "decimal-points.json"
 
 
 # ---------- 包内清单（只读基线） ----------
@@ -95,6 +96,18 @@ def probe_cache_dir() -> Path:
 def probe_cache_file() -> Path:
     """当日测速缓存文件路径（每次调用重新解析，便于测试改环境变量后立即生效）。"""
     return probe_cache_dir() / _PROBE_CACHE_NAME
+
+
+def decimal_cache_file() -> Path:
+    """权威价格小数位表缓存路径（每次调用重新解析，便于测试改环境变量后生效）。"""
+    return probe_cache_dir() / _DECIMAL_CACHE_NAME
+
+
+def decimal_sync_disabled() -> bool:
+    """是否已通过 ``PYPYTDX_DATA_DISABLE_DECIMAL_SYNC`` 关闭小数位后台同步。"""
+    return os.environ.get("PYPYTDX_DATA_DISABLE_DECIMAL_SYNC", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
 
 def probe_disabled() -> bool:

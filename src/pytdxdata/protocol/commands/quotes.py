@@ -12,30 +12,93 @@ from .base import BaseCommand
 MAX_QUOTES = 80
 
 
-def price_decimal_digits(market: int, code: str) -> int:
-    """推断报价的小数位：**协议原始整数除以 ``10**该值``** 才是真实价格。
+# ====================================================================== #
+# 权威小数位表（由证券清单 SecurityInfo.decimal_point 灌入）
+# ====================================================================== #
+# 查找顺序：**权威表 → 静态前缀规则**。权威表来自 ``get_universe`` 返回的
+# ``SecurityInfo.decimal_point``（协议自带，见 protocol/commands/security_list.py），
+# 由 ``pytdxdata.decimal_sync`` 在后台每日同步一次；未同步时静默退回静态规则，
+# 行为与 0.6.5 完全一致。
+_DECIMAL_PREFIX: dict[tuple[int, str], int] = {}
+_DECIMAL_CODE: dict[tuple[int, str], int] = {}
+_DECIMAL_MIXED: set[tuple[int, str]] = set()
+_DECIMAL_SOURCE: str = ""
 
-    四档：股票/指数/板块 ``2``、基金/ETF/B股 ``3``、债券/回购 ``4``。
 
-    该函数只是**离线推断**（``get_quotes`` 解析时拿不到证券清单）。真正的权威来源
-    是证券列表里协议自带的 ``SecurityInfo.decimal_point`` 字段——2026-10-22 拉取
-    全量 51,982 只（沪 27,520 + 深 24,462）逐条比对，本函数与之一一吻合、**零例外**。
-    能对上是因为「三位前缀 → 小数位」在全量清单里没有任何一个前缀出现混合小数位。
+def install_decimal_map(
+    items: "list[tuple[int, str, int]] | tuple[tuple[int, str, int], ...]",
+    *,
+    source: str = "",
+) -> dict[str, int]:
+    """用证券清单灌入权威小数位表。
 
-    历史修正（两次都是同一类错误：把某段前缀想当然地归错档）：
+    ``items`` 为 ``(market, code, decimal_point)`` 序列（直接来自
+    ``SecurityInfo``）。按**三位代码前缀**归并成一个极小的表（全量 5 万只标的
+    只产生数百个前缀）；若某个前缀出现**不同**小数位，则该前缀退化为逐代码查表，
+    只把这些例外代码存进 ``_DECIMAL_CODE``——这样即使将来交易所新增代码段，
+    也不会因为前缀规则过时而算错价格。
 
-    - **2026-10-21**：沪市 ``000``/``8`` 被判成 3 位 → 上证指数/上证50/科创50/
-      板块指数**价格少 10 倍**（3713 读成 371）。它们实际是 2 位。
-    - **2026-10-22**：债券与回购全线偏差 —— 沪市 ``010/018/019/020/1xx/2xx``
-      与深市 ``10x/11x/12x/13x/14x/19x/50x/52x/56x`` 实际是 **4 位**，原先
-      沪市落到 2 位（**少 100 倍**）、深市落到 3 位（**少 10 倍**）。实测例：
-      ``sh019742`` 110.228 读成 11022.8、``sh204001`` 1.385 读成 138.5、
-      ``sz131810`` 1.38 读成 13.8。同时沪市 B 股 ``900xxx`` 是 3 位（原先 2 位）。
-
-    实证方法：拿 ``pre_close``（快照口径）除以上一交易日**日线收盘**（K线口径，
-    走 ``/1000`` 独立路径），比值即标度误差 —— 1.0 正确、10 少 10 倍、100 少 100 倍。
+    返回统计：``{"prefixes", "codes", "mixed_prefixes", "stock"}``。
     """
-    code = (code or "").strip().rstrip("\x00")
+    global _DECIMAL_SOURCE
+    votes: dict[tuple[int, str], dict[int, int]] = {}
+    per_code: dict[tuple[int, str], int] = {}
+    for market, code, dp in items:
+        c = str(code or "").strip().rstrip("\x00")
+        if len(c) < 3:
+            continue
+        m = int(market)
+        if m not in (0, 1):
+            continue
+        d = int(dp)
+        if d <= 0:
+            continue
+        per_code[(m, c)] = d
+        key = (m, c[:3])
+        bucket = votes.setdefault(key, {})
+        bucket[d] = bucket.get(d, 0) + 1
+
+    _DECIMAL_PREFIX.clear()
+    _DECIMAL_CODE.clear()
+    _DECIMAL_MIXED.clear()
+    for key, bucket in votes.items():
+        if len(bucket) == 1:
+            _DECIMAL_PREFIX[key] = next(iter(bucket))
+        else:
+            _DECIMAL_MIXED.add(key)
+    for (m, c), d in per_code.items():
+        if (m, c[:3]) in _DECIMAL_MIXED:
+            _DECIMAL_CODE[(m, c)] = d
+    _DECIMAL_SOURCE = source or "universe"
+    return decimal_map_stats()
+
+
+def clear_decimal_map() -> None:
+    """清空权威表（回到纯静态前缀规则；测试与排障用）。"""
+    global _DECIMAL_SOURCE
+    _DECIMAL_PREFIX.clear()
+    _DECIMAL_CODE.clear()
+    _DECIMAL_MIXED.clear()
+    _DECIMAL_SOURCE = ""
+
+
+def decimal_map_stats() -> dict[str, int]:
+    """权威表状态：已覆盖前缀数 / 例外代码数 / 混合前缀数 / 总条目数。"""
+    return {
+        "prefixes": len(_DECIMAL_PREFIX),
+        "codes": len(_DECIMAL_CODE),
+        "mixed_prefixes": len(_DECIMAL_MIXED),
+        "stock": len(_DECIMAL_PREFIX) + len(_DECIMAL_CODE),
+    }
+
+
+def decimal_map_source() -> str:
+    """权威表来源标记（``universe`` / ``cache`` / ``""``=未加载）。"""
+    return _DECIMAL_SOURCE
+
+
+def _decimal_digits_static(market: int, code: str) -> int:
+    """静态前缀规则（**兜底**，权威表缺失时使用）。"""
     if market == 1:  # 沪市
         if code.startswith("5"):
             return 3                     # 基金/ETF/LOF（50/51/52/56/58 系）
@@ -54,6 +117,48 @@ def price_decimal_digits(market: int, code: str) -> int:
             return 2                     # 股票/指数/B股/优先股
         return 4                         # 债券(10x-14x/19x)、回购(131xxx)、ABS(50x/52x/56x)
     return 2
+
+
+def price_decimal_digits(market: int, code: str) -> int:
+    """报价小数位：**协议原始整数除以 ``10**该值``** 才是真实价格。
+
+    查找顺序：
+
+    1. **权威表**（:func:`install_decimal_map` 灌入）—— 来自证券清单里协议自带的
+       ``SecurityInfo.decimal_point``，由 ``pytdxdata.decimal_sync`` 每日后台同步一次。
+    2. **静态前缀规则**（:func:`_decimal_digits_static`）—— 权威表未就绪时兜底。
+       四档：股票/指数/板块 ``2``、基金/ETF/B股 ``3``、债券/回购 ``4``。
+
+    为什么还要静态规则：``get_quotes`` 解析是**纯同步、无网络**的路径，解析那一刻
+    可能还没同步过证券清单；而现网首次安装/离线环境也必须能算出价格。
+
+    权威表与静态规则的一致性：2026-10-22 拉取全量 51,982 只（沪 27,520 + 深 24,462）
+    逐条比对，静态规则与 ``decimal_point`` **一一吻合、零例外**——因为全量清单里
+    没有任何一个三位前缀出现混合小数位。因此两者并存不会产生口径冲突。
+
+    历史修正（两次都是同一类错误：把某段前缀想当然地归错档）：
+
+    - **2026-10-21**：沪市 ``000``/``8`` 被判成 3 位 → 上证指数/上证50/科创50/
+      板块指数**价格少 10 倍**（3713 读成 371）。它们实际是 2 位。
+    - **2026-10-22**：债券与回购全线偏差 —— 沪市 ``010/018/019/020/1xx/2xx``
+      与深市 ``10x/11x/12x/13x/14x/19x/50x/52x/56x`` 实际是 **4 位**，原先
+      沪市落到 2 位（**少 100 倍**）、深市落到 3 位（**少 10 倍**）。实测例：
+      ``sh019742`` 110.228 读成 11022.8、``sh204001`` 1.385 读成 138.5、
+      ``sz131810`` 1.38 读成 13.8。同时沪市 B 股 ``900xxx`` 是 3 位（原先 2 位）。
+
+    实证方法：拿 ``pre_close``（快照口径）除以上一交易日**日线收盘**（K线口径，
+    走 ``/1000`` 独立路径），比值即标度误差 —— 1.0 正确、10 少 10 倍、100 少 100 倍。
+    """
+    code = (code or "").strip().rstrip("\x00")
+    m = int(market)
+    if m in (0, 1):
+        hit = _DECIMAL_PREFIX.get((m, code[:3]))
+        if hit is not None:
+            return hit
+        hit = _DECIMAL_CODE.get((m, code))
+        if hit is not None:
+            return hit
+    return _decimal_digits_static(m, code)
 
 
 def format_server_time(raw: int) -> str:
