@@ -36,8 +36,12 @@ class GetSecurityListCmd(BaseCommand[list[SecurityInfo]]):
         self.start = start
 
     def build_request(self) -> bytes:
+        # 12 字节头 + market(H) + start(H) = **16 字节**。
+        # ⚠️ 曾经多塞一个 H（18 字节）：服务端只消费前 16 字节，剩下的 00 00
+        # 留在它的接收缓冲里，会把**下一个请求**的开头吃掉 → 该连接的后续请求
+        # 永远得不到响应（表现为「第一次成功、第二次起全部通信超时」）。
         header = bytes.fromhex("0c0118640101060006005004".replace(" ", ""))
-        return header + struct.pack("<HHH", self.market, self.start, 0)
+        return header + struct.pack("<HH", self.market, self.start)
 
     def parse_response(self, body: bytes) -> list[SecurityInfo]:
         (num,) = unpack_from("<H", body, 0, "security list header")

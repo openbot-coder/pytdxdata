@@ -139,13 +139,14 @@ await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 
 | 需求 | 方法 |
 |---|---|
-| 全市场标的清单（A股+港股+期货…） | `get_universe(market=None)` |
+| 全市场标的清单（A股+港股+期货…；**北交所返回空**） | `get_universe(market=None)` |
 | 日/周/月/分钟 K 线（任意市场） | `get_bars(symbols, period, *, count, adjust, start_date, end_date)` |
 | K 线 + MACD/KDJ/RSI/BOLL | `get_indicators(symbols, indicators, ...)` |
 | 实时五档报价（A股）/ 基础报价（港股/美股/期货） | `get_quotes(symbols, *, fields=None, pipeline=True)` |
 | 逐笔成交（任意市场） | `get_ticks(symbols, *, date)` |
 | 分时图 / 缩略采样 | `get_minutes(symbols, *, date, sampling=True)` |
 | 全市场股票列表（缓存 1 天） | `get_universe("sz")` / `get_universe("sh")` |
+| ~~北交所全量代码~~ | 拿不到：清单命令对 market=2 无响应（27 台全测）。北交所标的仍可直接查 `bj920992` |
 | 除权除息 / 财务快照 | `get_xdxr(symbols)` / `get_finance(symbols)` |
 | F10 公司资料 | `get_f10(symbol, section)` |
 | 板块列表 / 成分股 / 涨跌排行 | `get_boards` / `get_board_members` / `get_board_ranking` |

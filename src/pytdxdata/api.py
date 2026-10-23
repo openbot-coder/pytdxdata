@@ -155,6 +155,12 @@ _EX_TICK_PAGE = 1800      # 港股逐笔单页
 _ALL_PAGES_CAP = 50       # count=None（全量）时的翻页上限
 # 集合竞价**委托**记录标记（0x122F 第 5 字段）。不是成交，见 _ticks_one 注释。
 _BS_AUCTION_ORDER = 8
+# 证券清单（0x053E）拿不到的市场。实测 27 台标准主机对 market=2（北交所）**全部
+# 不响应**（26 台 6s 无回包、1 台立刻拒连），而同 market 的 0x053D 数量接口正常
+# （返回 389）。故清单直接返回空，避免每次调用白等数秒再抛 ConnectionError。
+# 北交所**标的本身没问题**：报价/K线/逐笔用 ``bj920992`` 这类代码都正常。
+_LIST_UNSUPPORTED_MARKETS = frozenset({int(Market.BJ)})
+_list_unsupported_warned: set[int] = set()   # 同一市场只 WARNING 一次
 
 # 港股系市场：逐笔走 EX 专用 16B 协议（0x23FC/0x2406），其余扩展市场走 MAC 0x122F
 _HK_MARKETS = frozenset({27, 31, 48, 49, 71, 98})
@@ -331,11 +337,22 @@ class TdxData:
         返回:
             ``list[SecurityInfo]``，每条带 ``symbol`` 规范化标的串与 ``kind`` 分类描述。
             EX 通道无昨收/单位，对应字段为 0。
+
+        注意:
+            **北交所（``"bj"``）清单返回空列表**：清单命令 0x053E 对 market=2
+            在所有实测服务器上都不响应（27 台全测），协议层根本拿不到。
+            但北交所**标的本身可用** —— 报价/K线/逐笔直接传 ``bj920992`` 这类代码
+            都正常，只是无法枚举全量代码。``market="all"`` 时该市场被跳过，不会报错。
         """
         out: list[SecurityInfo] = []
+        ex_items: list[SecurityInfo] | None = None
         for mkt, channel in market_targets(market):
             if channel == "ex":
-                out.extend(await self._universe_ex(mkt))
+                # EX 全量只取一次：命中缓存也要反序列化 10 万条（~200ms），
+                # 十几个 EX 市场各来一次纯属白烧。
+                if ex_items is None:
+                    ex_items = await self._ex_all()
+                out.extend(it for it in ex_items if it.market == mkt)
             else:
                 out.extend(await self._universe_cn(mkt))
         return out
@@ -374,6 +391,14 @@ class TdxData:
         return decimal_sync.status()
 
     async def _universe_cn(self, market: int) -> list[SecurityInfo]:
+        if market in _LIST_UNSUPPORTED_MARKETS:
+            if market not in _list_unsupported_warned:
+                _list_unsupported_warned.add(market)
+                log.warning(
+                    "市场 %s 的证券清单接口协议不支持（0x053E 无响应），返回空列表；"
+                    "该市场标的的报价/K线/逐笔不受影响", market)
+            return []
+
         key = CacheKey("list", market)
 
         async def fetch() -> bytes:
@@ -402,13 +427,18 @@ class TdxData:
 
         async def fetch() -> bytes:
             total = int(await self._execute_ex(GetExInstrumentCountCmd()))
+            starts = list(range(0, total, _EX_PAGE))
+            sem = asyncio.Semaphore(8)   # 实测 8 页并发 292ms（串行 110 页 ~4s）
+
+            async def one(pos: int) -> list[dict]:
+                async with sem:
+                    return await self._execute_ex(
+                        GetExInstrumentInfoCmd(0, pos, _EX_PAGE))
+
             items: list[SecurityInfo] = []
-            pos = 0
-            while pos < total:
-                page = await self._execute_ex(
-                    GetExInstrumentInfoCmd(0, pos, _EX_PAGE))
+            for page in await asyncio.gather(*(one(s) for s in starts)):
                 if not page:
-                    break
+                    continue
                 for g in page:
                     mkt = int(g["market"])
                     code = str(g["code"]).strip()
@@ -422,7 +452,6 @@ class TdxData:
                         symbol=format_symbol(mkt, code),
                         kind=str(g.get("desc", "")).strip(),
                     ))
-                pos += len(page)
             return pack_payload(items)
 
         return unpack_payload(await self._cache.get_or_fetch(key, fetch))
