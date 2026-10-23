@@ -47,7 +47,7 @@ from pytdxdata import (
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
-| `get_universe(market=None)` | `list[SecurityInfo]` | 跨市场标的清单（A 股+港股+美股+期货/期权）；每条带协议自带的 `decimal_point`（价格小数位）与 `pre_close` |
+| `get_universe(market=None)` | `list[SecurityInfo]` | 跨市场标的清单（A 股+港股+美股+期货/期权）；每条带协议自带的 `decimal_point`（价格小数位）与 `pre_close`。**北交所清单协议不支持，返回空列表** |
 | `sync_decimal_points(markets=("sh","sz"))` | `dict` | 从证券清单同步**权威价格小数位表**（`SecurityInfo.decimal_point`），灌进 `price_decimal_digits` 的运行时表；`start()` 已自动做（当日缓存命中则零网络），此方法用于强制刷新/排障 |
 | `decimal_point_status()` | `dict` | 小数位表状态：`source`（`cache`/`universe`/空）、`stock`、`mixed_prefixes`、`syncing` |
 
