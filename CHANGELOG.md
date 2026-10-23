@@ -2,6 +2,32 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.8] - 2026-10-23
+
+### 修复
+
+- **CLI 价格按品种小数位显示；`tdx minute` 时间列改回真实时钟**。
+
+  两处纯显示层缺陷，数据本身没问题（分时/逐笔数值见 0.6.7 的核对结论）：
+
+  | 现象 | 原因 |
+  |---|---|
+  | `tdx transactions sh113708` 打印 `128.89` | 价格写死 `%8.2f`；可转债报价步长 0.001 元，末位被截掉 |
+  | `tdx minute sh113708` 时间列 `00:00~03:59` | 按序号推算 `i // 60, i % 60`，与 bar 自带时间无关 |
+  | `tdx quotes sh113708` 打印 `128.8920` | `price_decimal_digits` 是**解码位数**（原始整数 / 10⁴），第 4 位恒为 0 |
+
+  | 位置 | 变化 |
+  |---|---|
+  | `_price_fmt(dp)`（新） | 宽度随小数位走（`%8.2f` → `%9.3f`），不破坏表格对齐 |
+  | `_display_dp(market, code)`（新） | 可转债（沪 `110/111/113/118`、深 `123/127/128`）由解码 4 位降到显示 3 位；其余沿用 `price_decimal_digits`（ETF 3 位、国债/回购 4 位、股票/指数 2 位） |
+  | `cmd_kline` / `cmd_transactions` / `cmd_minute` / `_print_quote` | 统一改用上面的格式串 |
+  | `cmd_minute` | 时间取 `MinuteBar.hour/minute`，不再用序号推算 |
+  | `cmd_transactions` / `cmd_minute` | 改调 `get_ticks` / `get_minutes`，消掉 `get_transactions` / `get_minute` 的 DeprecationWarning |
+
+  新增回归测试 8 项（`tests/test_cli_format.py`）。
+
+  文档：`docs/cli.md` 补「价格小数位按品种适配」对照表与 `tdx minute` 时间列说明。
+
 ## [0.6.7] - 2026-10-22
 
 ### 性能
