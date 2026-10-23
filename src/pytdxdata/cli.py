@@ -162,9 +162,9 @@ def _print_quote(q) -> None:
     print("=" * 58)
     label = "%s %s" % (mkt, q.code) if mkt else "%s  %s" % (q.code, q.server_time or datetime.now().strftime("%H:%M:%S"))
     print(" %s" % label)
-    print((" 最新 %-10.*f  涨跌 %+8.*f (%+.2f%%)" % (dp, q.price, dp, q.price - q.pre_close, pct)))
-    print((" 今开 %-10.*f  最高 %.*f  最低 %.*f" % (dp, q.open, dp, q.high, dp, q.low)))
-    print((" 昨收 %-10.*f  成交量 %s  成交额 %s" % (dp, q.pre_close, _fmt_num(q.vol), _fmt_num(q.amount))))
+    print(" 最新 %-10.*f  涨跌 %+8.*f (%+.2f%%)" % (dp, q.price, dp, q.price - q.pre_close, pct))
+    print(" 今开 %-10.*f  最高 %.*f  最低 %.*f" % (dp, q.open, dp, q.high, dp, q.low))
+    print(" 昨收 %-10.*f  成交量 %s  成交额 %s" % (dp, q.pre_close, _fmt_num(q.vol), _fmt_num(q.amount)))
     if q.bid and q.ask:
         print(" " + "-" * 56)
         pf = _price_fmt(dp)
