@@ -2,7 +2,7 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.6.8] - 2026-10-23
 
 ### 修复
 
@@ -25,6 +25,8 @@
   | `cmd_transactions` / `cmd_minute` | 改调 `get_ticks` / `get_minutes`，消掉 `get_transactions` / `get_minute` 的 DeprecationWarning |
 
   新增回归测试 8 项（`tests/test_cli_format.py`）。
+
+  文档：`docs/cli.md` 补「价格小数位按品种适配」对照表与 `tdx minute` 时间列说明。
 
 ## [0.6.7] - 2026-10-22
 
