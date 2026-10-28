@@ -47,13 +47,16 @@ async def main():
 asyncio.run(main())
 ```
 
-返回的是标准库 `dataclass` 组成的 `list`（库本身不依赖 pandas）。要 DataFrame 一行转：
+默认返回的是标准库 `dataclass` 组成的 `list`（核心库不依赖 pandas）。需要 DataFrame 就换个后端构造：
 
 ```python
-from dataclasses import asdict
-import pandas as pd
-df = pd.DataFrame([asdict(b) for b in bars])
+async with TdxData(df="polars") as td:       # 或 df="pandas"；需 pip install "pytdxdata[polars]"
+    df = await td.get_bars("sh600000", KlinePeriod.DAY, count=240)
+# 列：market code open high low close vol amount datetime trading_date symbol
 ```
+
+时间字段会被**合并成一列 `datetime`**（不再有 year/month/day/hour/minute），五档报价展开成
+`bid1_price`…`ask5_vol`，详见 [DataFrame 输出](https://openbot-coder.github.io/pytdxdata/dataframe/)。
 
 ## 特性
 
@@ -63,7 +66,8 @@ df = pd.DataFrame([asdict(b) for b in bars])
 | 🗄️ 双层 TTL 缓存 | 内存 LRU + 磁盘 SQLite（WAL），TTL 分级；single-flight 并发同键去重；缓存**已解析记录**（重复请求 0 网络 0 解析） |
 | ⚡ 并发分页 | 单请求拆 N 页（显式 start 偏移 → 无状态可并行）并行拉取、按序拼接、失败换连接重试 |
 | 🔀 双通道整合 | 标准通道（经典行情）+ MAC 通道（逐笔 / 复权 / 1 分钟 K 线），按命令自动选路 |
-| 📦 零重型依赖 | 纯 asyncio + stdlib（socket / zlib / struct / sqlite3） |
+| 📦 零重型依赖 | 纯 asyncio + stdlib（socket / zlib / struct / sqlite3），`dependencies` 为空 |
+| 🐼 DataFrame 直出 | `TdxData(df="polars")` / `df="pandas"` 让 42 个表格型接口直接返回 DataFrame；时间列自动合并成 `datetime`，五档报价自动展开。后端是可选 extras，核心包仍零依赖 |
 | 📊 全市场覆盖 | A股、港股、美股、期货、期权（46 个扩展市场） |
 | 📄 服务器文件解析 | 板块 `block_*.dat` / 行业 `tdxhy.cfg` / 财报 `gpcw*` **下载即解析**成 dataclass（索引名与服务器实际文件名不一致时自动纠正） |
 | 🤖 AI 助手友好 | 内置 [`SKILL.md`](https://github.com/openbot-coder/pytdxdata/blob/main/SKILL.md) 与 [`llms.txt`](https://openbot-coder.github.io/pytdxdata/llms.txt) |

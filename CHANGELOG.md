@@ -2,6 +2,51 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.0] - 2026-10-28
+
+### 新增
+
+- **DataFrame 直出：`TdxData(df="polars")` / `TdxData(df="pandas")`**。
+
+  表格型接口不再只能返回 `list[dataclass]`，构造时声明一次后端即可直接拿到 DataFrame：
+
+  ```python
+  async with TdxData(df="polars") as td:
+      df = await td.get_bars("sh600000", KlinePeriod.DAY, count=240)
+  ```
+
+  - 覆盖 **42 个**返回表格数据的方法（33 个 `list[dataclass]`、2 个 `list[dict]`、
+    2 个批量 `dict[str, list[...]]`、`get_indicators` 与 `get_index_trade_stats(_multi)`），
+    另含 deprecated 别名（`get_kline` / `get_transactions` / `get_goods_*` 等）。
+  - **核心包仍然零依赖**：pandas / polars 是可选 extras ——
+    `pip install "pytdxdata[polars]"` / `[pandas]` / `[dataframe]`。
+  - `df=None`（默认）**行为与 0.6.x 完全一致**，且装饰器直接透传，零额外开销。
+  - 取值非法抛 `ValueError` 并列出可用值；后端未安装抛 `FrameBackendError`（继承 `ImportError`，
+    `e.name` 为缺的包名，消息里带安装命令）——**在构造时就失败**，不会拖到第一次查询。
+
+- **列口径**（三条约定，一次定死）：
+
+  | 约定 | 说明 |
+  |---|---|
+  | 时间列替换 | `SecurityBar`/`IndexBar`/`MinuteBar` 的 `year/month/day/hour/minute` 不再单列输出，统一给 `datetime`（polars `Datetime('us')` / pandas `datetime64[ns]`）与 `trading_date`；`XdxrRecord` 给 `date` |
+  | 嵌套定型 | `SecurityQuote.bid`/`ask` 展开成 `bid1_price`…`ask5_vol` 共 10 列（缺档 `None`）；`fields` 字典 JSON 化成字符串列（空字典给 `None`）；`TdxBlock.codes` 保持列表 |
+  | 容器展开 | `get_indicators` → bars + 各指标一列（长度不足补 `None`）；`get_index_trade_stats(_multi)` → `minutes` 展开并补 `index`/`date` 常量列；`get_kline_batch`/`get_minute_batch` → 各标的纵向拼接成一张表 |
+
+- **嵌套调用不二次转换**：`get_kline_batch` 这类方法内部还会调 `get_bars`，
+  用 `ContextVar`（按 task 隔离）记录层次，内层一律返回原始 `list`，只有最外层那次才转 DataFrame。
+  并发调用互不干扰。
+
+### 兼容性
+
+- 无破坏性变更。不传 `df` 时所有方法签名、返回类型、行为与 0.6.9 完全相同。
+- 空结果返回**列名齐全的空表**（列由模型定义推出），dtype 由后端自行推断。
+
+### 文档
+
+- 新增 [DataFrame 输出](https://openbot-coder.github.io/pytdxdata/dataframe/) 专页，
+  `API_REFERENCE.md`（构造参数表补 `df` 与 `ex_pool_cap`、`pool_max` 默认值修正为 24）、
+  `SKILL.md`、`llms.txt`、`README.md`、`mkdocs.yml` 导航同步。
+
 ## [0.6.9] - 2026-10-23
 
 ### 修复

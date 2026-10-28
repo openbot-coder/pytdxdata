@@ -63,6 +63,24 @@ asyncio.run(main())
 > 旧的分通道/市场方法（`get_kline` / `get_transactions` / `get_goods_*` 等共 33 个）保留为
 > deprecated 别名，1.0 移除；完整对照见[接口重构审查](https://openbot-coder.github.io/pytdxdata/refactor-audit/)与 CHANGELOG。
 
+## DataFrame 输出（v0.7+）
+
+表格型接口可以直出 pandas / polars DataFrame，开关只有构造参数 `df`：
+
+```python
+from pytdxdata import TdxData
+
+async with TdxData(df="polars") as td:      # 或 df="pandas"；df=None（默认）= list[dataclass]
+    df = await td.get_bars("sh600000", count=240)
+```
+
+- 需先装 extra：`pip install "pytdxdata[polars]"` / `[pandas]` / `[dataframe]`。**核心包仍零依赖**。
+- `df=None` 时行为与 0.6.x 完全一致（装饰器直接透传，零开销）；`df` 非法抛 `ValueError`，包没装抛 `FrameBackendError`（带安装命令）。
+- 列口径：**时间列替换**拆开的 `year/month/day/hour/minute` → `datetime`（+ `trading_date`）；`bid`/`ask` 五档展开成 10 列；`fields` 字典 JSON 化成字符串列（空字典给 `None`）；`TdxBlock.codes` 保持列表。
+- `get_indicators` → bars + 指标合并成一张表；`get_index_trade_stats(_multi)` → `minutes` 展开并补 `index`/`date` 常量列；`get_kline_batch`/`get_minute_batch` → 各标的纵向拼接成一张表。
+- **不受影响**：`bytes`/`int`/`dict`/单对象/`tuple`/`list[float]`/`list[str]` 类接口原样返回（如 `get_file`、`get_security_count`、`get_server_info`）。
+- 空结果返回**列名齐全的空表**，但 dtype 只由后端推断。
+
 ## 服务器与配置
 
 服务器主机来源有一条优先级链（各协议独立）：环境变量 → **当日测速缓存** → 包内清单

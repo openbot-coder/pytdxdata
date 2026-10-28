@@ -1,6 +1,6 @@
 # pytdxdata 对外接口清单
 
-> 以 `src/pytdxdata` 源码为准整理（v0.6.0）。分四类：Python API / 数据模型 / 辅助模块 / CLI。
+> 以 `src/pytdxdata` 源码为准整理（v0.7.0）。分四类：Python API / 数据模型 / 辅助模块 / CLI。
 >
 > 方法与代码的一致性由 `scripts/check_docs.py` 在 CI 中校验。
 
@@ -28,8 +28,9 @@ from pytdxdata import (
 | `cache_dir` | None | 磁盘缓存目录；None=仅内存缓存 |
 | `default_adjust` | `Adjust.NONE` | 默认复权方式 |
 | `max_inflight` | 64 | single-flight 并发上限 |
-| `pool_min` / `pool_max` | 3 / 12 | 动态池上下限 |
-| `mac_pool_cap` | 4 | 单台 MAC 服务器连接上限 |
+| `pool_min` / `pool_max` | 3 / 24 | 动态池上下限 |
+| `mac_pool_cap` / `std_pool_cap` / `ex_pool_cap` | 4 / 4 / 2 | 单台服务器连接上限 |
+| `df` | None | **DataFrame 后端**：`None`=返回 `list[dataclass]`（0.6.x 行为）、`"polars"`、`"pandas"`。需先装 extra：`pip install pytdxdata[polars]`，详见 [DataFrame 输出](dataframe.md) |
 
 生命周期：
 
@@ -40,6 +41,10 @@ from pytdxdata import (
 | `async with TdxData() as td:` | 上下文管理器，自动 start/close |
 
 ### 2.1 统一接口（v0.6+ 推荐）{#unified}
+
+> **DataFrame（v0.7+）**：本节的表格型方法在 `TdxData(df="polars")` / `df="pandas"` 时
+> 直接返回 DataFrame；`df=None`（默认）返回下表的 `list[...]`。列口径、时间列替换规则、
+> 不受影响的接口清单见 [DataFrame 输出](dataframe.md)。
 
 以下方法在 v0.6 新增，标的一律用字符串（`sz000001` / `hk00700` / `usAAPL` / `cffex:IFL0`）。
 

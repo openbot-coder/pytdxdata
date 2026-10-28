@@ -38,6 +38,7 @@ from .cache.manager import CacheManager
 from .cache.memory import MemoryCache
 from .codec.payload import pack_payload, unpack_payload
 from .config import EX_HANDSHAKES, get_ex_hosts, get_mac_hosts, get_standard_hosts
+from .frames import framed, get_backend
 from .models import (
     Adjust,
     AuctionItem,
@@ -249,7 +250,15 @@ class TdxData:
         mac_pool_cap: int = 4,
         std_pool_cap: int = 4,
         ex_pool_cap: int = 2,
+        df: str | None = None,
     ) -> None:
+        # df=None（默认）保持 0.6.x 的行为：表格型方法一律返回 list[dataclass]。
+        # df="polars" / df="pandas" 时这些方法直接返回对应后端的 DataFrame。
+        # 这里早失败一次：名字非法抛 ValueError，包没装抛 FrameBackendError（带安装命令）。
+        if df is not None:
+            get_backend(df)
+        self._df_backend = df
+
         self.port = port
         self.timeout = timeout
         self.default_adjust = default_adjust
@@ -326,6 +335,7 @@ class TdxData:
     # 一、标的清单
     # ================================================================== #
 
+    @framed
     async def get_universe(self, market: str | None = None) -> list[SecurityInfo]:
         """标的清单（A股证券列表 + 扩展市场商品列表），一次覆盖所有市场。
 
@@ -472,6 +482,7 @@ class TdxData:
     # 二、报价
     # ================================================================== #
 
+    @framed
     async def get_quotes(self, symbols: str | Sequence[str], *,
                          fields: Sequence[int] | None = None,
                          concurrency: int | None = None,
@@ -649,6 +660,7 @@ class TdxData:
         await self._std_pool.release(pc)
         return rows
 
+    @framed
     async def get_snapshot(self, symbols: str | Sequence[str]) -> list[SymbolSnapshot]:
         """个股特征快照（当日/换手/活跃度等，仅 A股）。"""
         syms = parse_symbols(symbols)
@@ -668,6 +680,7 @@ class TdxData:
                 out.append(rec)
         return out
 
+    @framed
     async def get_auction(self, symbols: str | Sequence[str]) -> list[AuctionItem]:
         """集合竞价（仅 A股）。"""
         syms = parse_symbols(symbols)
@@ -680,6 +693,7 @@ class TdxData:
             out.extend(items)
         return out
 
+    @framed
     async def get_capital_flow(self, symbols: str | Sequence[str]) -> list[CapitalFlow]:
         """个股资金流向（仅 A股）。"""
         syms = parse_symbols(symbols)
@@ -696,6 +710,7 @@ class TdxData:
     # 三、K线
     # ================================================================== #
 
+    @framed
     async def get_bars(
         self,
         symbols: str | Sequence[str],
@@ -937,6 +952,7 @@ class TdxData:
             return None
         return bars[0] if bars else None
 
+    @framed
     async def get_indicators(
         self, symbols: str | Sequence[str], indicators: Sequence[str], *,
         period: KlinePeriod = KlinePeriod.DAY, count: int = 30,
@@ -975,6 +991,7 @@ class TdxData:
     # 四、逐笔成交 / 分时
     # ================================================================== #
 
+    @framed
     async def get_ticks(
         self, symbols: str | Sequence[str], *,
         date: int | None = None, start: int = 0, count: int | None = None,
@@ -1156,6 +1173,7 @@ class TdxData:
             trade_count_available=False,   # 扩展市场逐笔不带笔数字段
         )
 
+    @framed
     async def get_minutes(
         self, symbols: str | Sequence[str], *,
         date: int | None = None, sampling: bool = False, concurrency: int = 6,
@@ -1236,6 +1254,7 @@ class TdxData:
     # 五、公司信息
     # ================================================================== #
 
+    @framed
     async def get_xdxr(self, symbols: str | Sequence[str]) -> list[XdxrRecord]:
         """除权除息历史，仅 A股。标的用字符串（``"sz000001"``）。"""
         syms = parse_symbols(symbols)
@@ -1254,6 +1273,7 @@ class TdxData:
             out.extend(recs)
         return out
 
+    @framed
     async def get_finance(self, symbols: str | Sequence[str]) -> list[FinanceRecord]:
         """财务快照（仅 A股）。无数据的标的会被跳过（原单标的接口返回 None）。"""
         syms = parse_symbols(symbols)
@@ -1324,6 +1344,7 @@ class TdxData:
             stat.limit_down_count = int(q6.open * 10)
         return stat
 
+    @framed
     async def get_unusual(self, market: str = "all", *, start: int = 0,
                           count: int = 600) -> list[UnusualItem]:
         """市场异动（仅 A股；``market="all"`` = 深市 + 沪市）。"""
@@ -1359,6 +1380,7 @@ class TdxData:
                 f"未知板块类别: {kind}（可选: {'/'.join(table)} 或数字）")
         return table[key]
 
+    @framed
     async def get_boards(self, kind: str = "all", *, count: int = 10000) -> list[BoardInfo]:
         """板块列表（``kind``: ``all``/``industry``/``concept``/``style``，也接受数字）。
 
@@ -1380,6 +1402,7 @@ class TdxData:
             b.symbol = format_symbol(b.market, b.code)
         return items
 
+    @framed
     async def get_board_members(self, board: str, count: int = 100000,
                                 sort_type: int = 0, *,
                                 fields: Sequence[int] | None = None
@@ -1405,6 +1428,7 @@ class TdxData:
                 break
         return items
 
+    @framed
     async def get_board_of(self, symbols: str | Sequence[str]) -> list[BelongBoard]:
         """个股所属板块（仅 A股；``symbol`` 记录被查询的个股）。"""
         syms = parse_symbols(symbols)
@@ -1433,11 +1457,13 @@ class TdxData:
             "down_count": down,
         }
 
+    @framed
     async def get_board_ranking(self, kind: str = "industry", *,
                                 top_n: int = 20) -> list[dict]:
         """板块当日涨跌幅排行（基于板块报价的现价/昨收）。"""
         return self._rank_boards(await self.get_boards(kind, count=200), top_n)
 
+    @framed
     async def get_board_change_ranking(self, kind: str = "industry", *,
                                        days: int = 20, top_n: int = 20) -> list[dict]:
         """板块 N 日涨跌幅排行（基于板块指数K线）。"""
@@ -1522,6 +1548,7 @@ class TdxData:
             return 2, s
         raise ValueError(f"无法判定指数市场: {index!r}（不是 A股指数代码段）")
 
+    @framed
     async def get_index_members(self, index: str, *, count: int = 100000,
                                 fields: Sequence[int] | None = None
                                 ) -> list[SecurityQuote]:
@@ -1570,6 +1597,7 @@ class TdxData:
                 break
         return items[:count]
 
+    @framed
     async def get_index_trade_stats(
         self,
         index: str,
@@ -1694,6 +1722,7 @@ class TdxData:
             elapsed=time.perf_counter() - started,
         )
 
+    @framed
     async def get_index_trade_stats_multi(
         self,
         index: str,
@@ -1774,6 +1803,7 @@ class TdxData:
                 break
         return bytes(data)
 
+    @framed
     async def get_block_parsed(self, filename: str) -> list[TdxBlock]:
         """板块文件 -> ``list[TdxBlock]``（板块名/类别/成分股）。
 
@@ -1788,11 +1818,13 @@ class TdxData:
         from .codec.industry import parse_tdxhy_cfg
         return parse_tdxhy_cfg(await self.get_file("tdxhy.cfg"))
 
+    @framed
     async def get_financial_file_infos(self) -> list[FinancialFileInfo]:
         """tdxfin/gpcw.txt -> ``list[FinancialFileInfo]``（文件名/MD5/大小）。"""
         from .codec.financial import parse_financial_file_list
         return parse_financial_file_list(await self.get_file("tdxfin/gpcw.txt"))
 
+    @framed
     async def get_financial_records_parsed(self, filename: str) -> list[FinancialRecord]:
         """财报数据解析 -> ``list[FinancialRecord]``。
 
@@ -1986,6 +2018,7 @@ class TdxData:
     # 九、旧接口（deprecated 别名；入参沿用旧口径，1.0 移除）
     # ================================================================== #
 
+    @framed
     async def get_kline(self, market, code, period, *, start: int = 0,
                         count: int = 800, adjust: Adjust | None = None,
                         start_date: datetime | None = None,
@@ -1996,6 +2029,7 @@ class TdxData:
                                    start=start, count=count, adjust=adjust,
                                    start_date=start_date, end_date=end_date)
 
+    @framed
     async def get_kline_since(self, market, code, period, since: datetime,
                               adjust: Adjust | None = None) -> list[SecurityBar]:
         """已废弃 -> :meth:`get_bars`（``start_date=since``）。"""
@@ -2003,6 +2037,7 @@ class TdxData:
         return await self.get_bars(format_symbol(int(market), code), period,
                                    start_date=since, adjust=adjust)
 
+    @framed
     async def get_kline_batch(self, stocks, period, *, start: int = 0,
                               count: int = 800, adjust: Adjust | None = None,
                               concurrency: int = 6) -> dict[str, list[SecurityBar]]:
@@ -2016,6 +2051,7 @@ class TdxData:
             out.setdefault(b.code, []).append(b)
         return out
 
+    @framed
     async def get_index_kline(self, market, code, period, *, start: int = 0,
                               count: int = 800) -> list[SecurityBar]:
         """已废弃 -> :meth:`get_bars`（指数自动识别，无需单独接口）。"""
@@ -2036,12 +2072,14 @@ class TdxData:
         one = sets[0]
         return {"bars": one.bars, "indicators": one.indicators}
 
+    @framed
     async def get_stock_quotes(self, stocks, bits=None) -> list[SecurityQuote]:
         """已废弃 -> :meth:`get_quotes`（``fields=bits``）。"""
         _deprecated("get_stock_quotes", "get_quotes")
         return await self.get_quotes([format_symbol(int(m), c) for m, c in stocks],
                                      fields=bits)
 
+    @framed
     async def get_stock_quotes_list(self, category: int, *, start: int = 0,
                                     count: int = 80, sort_type: int = 0
                                     ) -> list[SecurityQuote]:
@@ -2050,6 +2088,7 @@ class TdxData:
         return await self._board_members_raw(category, start=start, count=count,
                                              sort_type=sort_type)
 
+    @framed
     async def get_transactions(self, market, code, *, date: int | None = None,
                                start: int = 0, count: int = 2000
                                ) -> list[TransactionRecord]:
@@ -2058,12 +2097,14 @@ class TdxData:
         return await self.get_ticks(format_symbol(int(market), code), date=date,
                                     start=start, count=count)
 
+    @framed
     async def get_minute(self, market, code, *, date: int | None = None
                          ) -> list[MinuteBar]:
         """已废弃 -> :meth:`get_minutes`。"""
         _deprecated("get_minute", "get_minutes")
         return await self.get_minutes(format_symbol(int(market), code), date=date)
 
+    @framed
     async def get_minute_batch(self, stocks, *, date: int | None = None,
                                concurrency: int = 6) -> dict[str, list[MinuteBar]]:
         """已废弃 -> :meth:`get_minutes`（返回值由 ``{code: bars}`` 变为平铺列表）。"""
@@ -2086,6 +2127,7 @@ class TdxData:
         _deprecated("get_security_count", "get_universe")
         return await self._security_count(int(market))
 
+    @framed
     async def get_security_list(self, market, *, start: int = 0,
                                 count: int | None = None) -> list[SecurityInfo]:
         """已废弃 -> :meth:`get_universe`（本地切片 ``[start:start+count]``）。"""
@@ -2093,6 +2135,7 @@ class TdxData:
         items = await self.get_universe(market_name(int(market)))
         return items[start:] if count is None else items[start:start + count]
 
+    @framed
     async def get_security_list_all(self, market) -> list[SecurityInfo]:
         """已废弃 -> :meth:`get_universe`。"""
         _deprecated("get_security_list_all", "get_universe")
@@ -2146,12 +2189,14 @@ class TdxData:
         _deprecated("download_file", "get_file")
         return await self.get_file(filename)
 
+    @framed
     async def get_board_list(self, board_type: int | str = 0,
                              count: int = 10000) -> list[BoardInfo]:
         """已废弃 -> :meth:`get_boards`。"""
         _deprecated("get_board_list", "get_boards")
         return await self.get_boards(board_type, count=count)
 
+    @framed
     async def get_belong_board(self, market, code) -> list[BelongBoard]:
         """已废弃 -> :meth:`get_board_of`。"""
         _deprecated("get_belong_board", "get_board_of")
@@ -2163,6 +2208,7 @@ class TdxData:
         items = await self.get_snapshot(format_symbol(int(market), code))
         return items[0] if items else None
 
+    @framed
     async def get_goods_list(self, market, start: int = 0,
                              count: int = 100) -> list[SecurityInfo]:
         """已废弃 -> :meth:`get_universe`（扩展到 ``SecurityInfo`` 统一模型）。"""
@@ -2177,12 +2223,14 @@ class TdxData:
             return len(await self._ex_all())
         return len(await self._universe_ex(int(market)))
 
+    @framed
     async def get_goods_quotes(self, stocks, bits=None) -> list[SecurityQuote]:
         """已废弃 -> :meth:`get_quotes`。"""
         _deprecated("get_goods_quotes", "get_quotes")
         return await self.get_quotes([format_symbol(int(m), c) for m, c in stocks],
                                      fields=bits)
 
+    @framed
     async def get_goods_quotes_list(self, market, count: int = 80
                                     ) -> list[SecurityQuote]:
         """已废弃 -> :meth:`get_quotes`（或 ``get_universe`` 取清单后自选）。"""
@@ -2198,6 +2246,7 @@ class TdxData:
         bars = await self.get_minutes(format_symbol(int(market), code), sampling=True)
         return [b.price for b in bars]
 
+    @framed
     async def get_goods_tick_chart(self, market, code,
                                    ymd: int = 0) -> list[MinuteBar]:
         """已废弃 -> :meth:`get_minutes`（扩展到统一分时模型）。"""
@@ -2205,6 +2254,7 @@ class TdxData:
         return await self.get_minutes(format_symbol(int(market), code),
                                       date=ymd or None)
 
+    @framed
     async def get_goods_transaction(self, market, code, *, ymd: int = 0,
                                     start: int = 0, count: int = 1800
                                     ) -> list[TransactionRecord]:
@@ -2213,6 +2263,7 @@ class TdxData:
         return await self.get_ticks(format_symbol(int(market), code),
                                     date=ymd or None, start=start, count=count)
 
+    @framed
     async def get_goods_transaction_all(self, market, code,
                                         ymd: int = 0) -> list[TransactionRecord]:
         """已废弃 -> :meth:`get_ticks`（``count=None`` 即全量翻页）。"""

@@ -52,6 +52,7 @@ df = pd.DataFrame([asdict(b) for b in bars])
 
 ```bash
 pip install pytdxdata        # 或 uv add pytdxdata
+pip install "pytdxdata[polars]"   # 需要 DataFrame 输出时才装（可选 extras）
 ```
 
 ## 可运行模板
@@ -181,6 +182,28 @@ await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 - **历史逐笔有笔数**（MAC `0x122F` 支持历史日期，实测可回溯最近 5 个交易日；更早返回空）。
 - **小数位表不用手动管，但可以手动刷**。`start()` 会检查当日缓存并后台同步一次（`SecurityInfo.decimal_point` 权威值）；要强制刷新用 `await td.sync_decimal_points()`，看同步状态用 `await td.decimal_point_status()`。`PYPYTDX_DATA_DISABLE_DECIMAL_SYNC=1` 可关闭后台同步。
 - 板块文件（`block_*.dat`）/ 行业（`tdxhy.cfg`）/ 财报（`gpcw*.zip`）是**服务器上的静态文件**，解析后是普通 dataclass，**落 JSON 后完全脱网可用**——适合做离线快照。
+
+## DataFrame 输出（v0.7+）
+
+表格型方法可以直出 DataFrame，**唯一开关是构造参数 `df`**，不要在调用处传 `df=True`（没有这个参数）：
+
+```python
+async with TdxData(df="polars") as td:      # 或 df="pandas"
+    df = await td.get_bars("sh600000", KlinePeriod.DAY, count=240)
+```
+
+| 事项 | 说明 |
+|---|---|
+| 安装 | `pip install "pytdxdata[polars]"` / `[pandas]` / `[dataframe]`；核心包仍零依赖 |
+| `df=None`（默认） | 行为与 0.6.x 完全一致，返回 `list[dataclass]` |
+| 报错 | `df` 取值非法 → `ValueError`；包没装 → `FrameBackendError`（启动即失败，不拖到第一次查询） |
+| 时间列 | `year/month/day/hour/minute` **被 `datetime` 替换**，另带 `trading_date`；`XdxrRecord` 给 `date` |
+| 嵌套 | `bid`/`ask` 展开成 `bid1_price`…`ask5_vol` 共 10 列；`fields` 字典 JSON 化成字符串列；`codes` 保持列表 |
+| 特殊容器 | `get_indicators` → bars+指标合并；`get_index_trade_stats(_multi)` → `minutes` 展开 + `index`/`date` 列；`get_kline_batch` / `get_minute_batch` → 纵向拼接成一张表 |
+| 不受影响 | `bytes` / `int` / `dict` / 单对象 / `tuple` / `list[float]` 类返回原样（`get_file`、`get_security_count`、`get_server_info`、`get_price_limits` 等） |
+| 空结果 | 列名齐全的空表；dtype 只由后端推断 |
+
+完整口径见 [DataFrame 输出](https://openbot-coder.github.io/pytdxdata/dataframe/)。
 
 ## 陷阱清单
 
