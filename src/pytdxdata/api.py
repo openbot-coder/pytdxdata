@@ -1056,8 +1056,10 @@ class TdxData:
         from .protocol.commands.ex_proto import GetExInstrumentBarsCmd
         cat = int(period)
         fetch_count = max(700, start + count)
+        # extra 带的 @v2 是缓存 schema 标记：v2 起 EX K线开始回填 amount/settle，
+        # 旧版本写下的缓存里 amount 恒 0.0，必须让它们自然失效。
         key = CacheKey("kline", sym.market, sym.code, period.name, start,
-                       fetch_count, f"{adj.name}@{cat}")
+                       fetch_count, f"{adj.name}@{cat}@v2")
 
         async def fetch() -> bytes:
             rows = await self._fetch_paginated_ex(
@@ -1068,7 +1070,10 @@ class TdxData:
                 year=d["year"], month=d["month"], day=d["day"],
                 hour=d.get("hour", 0), minute=d.get("minute", 0),
                 open=d["open"], high=d["high"], low=d["low"], close=d["close"],
-                vol=float(d.get("trade", 0) or 0), amount=0.0,
+                vol=float(d.get("trade", 0) or 0),
+                # 权益类（港股/美股/新三板）真有成交额；期货期权的帧里没有，恒 0.0
+                amount=float(d.get("amount", 0.0) or 0.0),
+                settle=d.get("settle"),
             ) for d in rows]
             return pack_payload(bars)
 

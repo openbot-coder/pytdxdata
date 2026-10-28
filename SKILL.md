@@ -231,6 +231,8 @@ async with TdxData(df="polars") as td:      # 或 df="pandas"
 | 拿指数逐笔的 `trade_count` 当笔数 | 拿到的是「均价×1000」，数值荒谬 | 用 `get_index_trade_stats(index)` 由成分累加 |
 | 拿 ETF/LOF 逐笔的 `trade_count` 当笔数 | 拿到的是「价格×1000」（`sh510310` 显示 3994 笔） | 看 `trade_count_available`，或 `symbols.has_order_count()` |
 | 拿深市 `399xxx` 的 `amount` 校验成分合计 | 比值 0.43，误以为数据错 | 深市指数 amount 是**全板块**口径（`sz399001`=深市全部 5081 亿），不是样本股 |
+| 在期货/期权 K 线上取 `amount` | 恒 0.0，误以为解析坏了 | EX `0x23FF` 帧内**没有成交额**（协议限制）；结算价看 `bar.settle`，成交额改用 `get_quotes` |
+| 用港股主板的 `amount / vol` 当均价 | 差 **100 倍** | 港股主板/基金的 `vol` 单位是**手（=100 股）**，要 `amount/vol/100`；港股创业板/美股才是股 |
 | 依赖实时性做信号 | 数据是 15 分钟前的 | 换券商实时源 |
 | 手动改包内 `servers.json` / 写死 IP | 容器只读、升级被覆盖、快节点捞不回来 | 日常靠内置的**当日测速缓存**自动选路；要强制指定就用 `PYPYTDX_DATA_{STANDARD,MAC,EX}_HOSTS` 环境变量 |
 

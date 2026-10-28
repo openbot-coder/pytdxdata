@@ -108,6 +108,9 @@ DataFrame 只是换了个容器，**下面这些口径不会因为转成 DataFra
 - 股票/ETF 的 `vol` 是「手」，日线是「股」；可转债 `vol` 手=10 张，`amount/vol` 是均价 **×10**；指数逐笔 `vol` 是百元。
 - 指数和 ETF/LOF 的 `trade_count` 不是笔数（见 `TransactionRecord.trade_count_available`）。
 - 深市 `399xxx` 的 `amount` 是全板块口径，不要拿去校验成分合计。
+- K 线的 `settle`（结算价）列只有 **EX 通道的期货/期权日线**有值，其余行全为 `None`；
+  同一批 EX 标的中，期货/期权的 `amount` 恒 `0.0`（`0x23FF` 帧内没有成交额），
+  港股主板/基金的 `vol` 单位是「手」（`amount/vol` 是均价的 100 倍）。
 
 细节见 [数据模型](api/models.md) 与 [常见问题](faq.md)。
 

@@ -204,7 +204,7 @@ from pytdxdata import (
 
 | 模型 | 关键字段 |
 |------|---------|
-| `SecurityBar` | market/code/open/high/low/close/vol/amount/year/month/day/hour/minute + `datetime` 属性 |
+| `SecurityBar` | market/code/open/high/low/close/vol/amount/year/month/day/hour/minute/symbol/**settle** + `datetime` 属性（`settle` 结算价仅 EX 期货/期权日线有值，其余为 `None`） |
 | `IndexBar` | 继承 `SecurityBar`（指数K线） |
 | `SecurityQuote` | price/pre_close/OHLC/vol/amount/s_vol/b_vol/`bid[5]`/`ask[5]`/server_time/trading_status/cur_vol/rise_speed/limit_up/limit_down/decimal_point/open_amount |
 | `SecurityInfo` | market/code/name/volunit/decimal_point/pre_close |
@@ -237,8 +237,18 @@ from pytdxdata import (
 | 股票 / ETF / LOF | 手（= 100 股） | 股 | **0.01** | 均价 ✓ |
 | 可转债（110/111/113/118/123/127/128） | 手（= 10 张） | **手** | **1.0** | 均价 **×10** ⚠️ |
 | 指数 | 百元（成交额/100） | 手 | — | 无意义（`amount` 是全板块口径） |
+| 港股主板 31 / 港股基金 49 | — | **手（= 100 股）** | — | 均价 **×100** ⚠️ |
+| 港股创业板 48 / 新三板 44 / 美股 74 | — | 股 | — | 均价 ✓ |
+| 期货 / 期权（EX 全市场） | — | 手/张 | — | **`amount` 恒 0.0**（帧内无成交额，见下） |
 
-算均价：股票 `amount / vol`；可转债 `amount / vol / 10`；跨品种统一用 `Σ(price×vol) / Σvol`。
+算均价：股票 `amount / vol`；可转债 `amount / vol / 10`；港股主板/基金 `amount / vol / 100`；跨品种统一用 `Σ(price×vol) / Σvol`。
+
+> ⚠️ **EX 通道（0x23FF）的成交额不是全市场都有的**。一条记录 32B = 4B 时间 + 28B 行情，
+> 28B 里只有**一个** 4B 槽位可复用，语义按市场分两类：
+> 权益类（港股主板/创业板/基金、新三板、美股）该槽位是**成交额**，`amount` 正常；
+> 期货期权类该槽位是**结算价**（体现在 `SecurityBar.settle`，日线才有值），
+> `amount` 恒 **0.0** —— 这是协议限制，不是解析漏读，要成交额请改用 `get_quotes` 或其它源。
+> 港股指数（27）/ 中证指数（62）该槽位语义未明，同样保守返回 `0.0`。
 
 > 可转债的价格标度、分时、逐笔已全量校验（16 只当日 + 8 只历史日）：分时末价 / 快照现价、`Σvol / 日线vol`、逐笔 VWAP vs `amount/(vol×10)` 比值均为 **1.000000**。
 
@@ -325,7 +335,10 @@ CLI 开关：`--discover`（三种协议全测并据实修正 `protocols`，同�
 | 逐笔成交 / 分时 | MAC |
 | 列表 / 数量 / 除权 / 财务 | 标准 |
 | 板块 / 竞价 / 异动 / 快照 / 资金流 / 服务器 / 分类报价 | MAC |
-| 港股 / 美股 / 期货 / 期权 | EX（端口 7727） |
+| 港股 / 美股 / 期货 / 期权 | EX（端口 7727，`0x23FF`） |
+
+> EX 通道的 K 线（`0x23FF`）字段口径与 A 股不同，见「量纲对照」下的注：
+> 权益类市场（港股/美股/新三板）有 `amount`；期货期权有 `settle`（结算价）但**没有** `amount`。
 
 **多标的 K 线（`get_bars` 传 ≥16 只）额外走「批量流水线」**：按上表选池后，
 多条连接并行、每条连接一次下发 `pipeline` 条请求（默认自适应 8~32），把 N 次往返
