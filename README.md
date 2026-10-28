@@ -47,13 +47,16 @@ async def main():
 asyncio.run(main())
 ```
 
-返回的是标准库 `dataclass` 组成的 `list`（库本身不依赖 pandas）。要 DataFrame 一行转：
+默认返回的是标准库 `dataclass` 组成的 `list`（核心库不依赖 pandas）。需要 DataFrame 就换个后端构造：
 
 ```python
-from dataclasses import asdict
-import pandas as pd
-df = pd.DataFrame([asdict(b) for b in bars])
+async with TdxData(df="polars") as td:       # 或 df="pandas"；需 pip install "pytdxdata[polars]"
+    df = await td.get_bars("sh600000", KlinePeriod.DAY, count=240)
+# 列：market code open high low close vol amount datetime trading_date symbol settle
 ```
+
+时间字段会被**合并成一列 `datetime`**（不再有 year/month/day/hour/minute），五档报价展开成
+`bid1_price`…`ask5_vol`，详见 [DataFrame 输出](https://openbot-coder.github.io/pytdxdata/dataframe/)。
 
 ## 特性
 
@@ -63,7 +66,8 @@ df = pd.DataFrame([asdict(b) for b in bars])
 | 🗄️ 双层 TTL 缓存 | 内存 LRU + 磁盘 SQLite（WAL），TTL 分级；single-flight 并发同键去重；缓存**已解析记录**（重复请求 0 网络 0 解析） |
 | ⚡ 并发分页 | 单请求拆 N 页（显式 start 偏移 → 无状态可并行）并行拉取、按序拼接、失败换连接重试 |
 | 🔀 双通道整合 | 标准通道（经典行情）+ MAC 通道（逐笔 / 复权 / 1 分钟 K 线），按命令自动选路 |
-| 📦 零重型依赖 | 纯 asyncio + stdlib（socket / zlib / struct / sqlite3） |
+| 📦 零重型依赖 | 纯 asyncio + stdlib（socket / zlib / struct / sqlite3），`dependencies` 为空 |
+| 🐼 DataFrame 直出 | `TdxData(df="polars")` / `df="pandas"` 让 42 个表格型接口直接返回 DataFrame；时间列自动合并成 `datetime`，五档报价自动展开。后端是可选 extras，核心包仍零依赖 |
 | 📊 全市场覆盖 | A股、港股、美股、期货、期权（46 个扩展市场） |
 | 📄 服务器文件解析 | 板块 `block_*.dat` / 行业 `tdxhy.cfg` / 财报 `gpcw*` **下载即解析**成 dataclass（索引名与服务器实际文件名不一致时自动纠正） |
 | 🤖 AI 助手友好 | 内置 [`SKILL.md`](https://github.com/openbot-coder/pytdxdata/blob/main/SKILL.md) 与 [`llms.txt`](https://openbot-coder.github.io/pytdxdata/llms.txt) |
@@ -114,6 +118,10 @@ uv run mkdocs serve            # 本地预览文档站
 - 行情来自通达信公开服务器，**15 分钟延时**；需实时数据请使用券商行情
 - 标准通道 K 线 `count < 100` 部分服务器返回空 → 分页器已强制 `min_page=100` 规避
 - 港股 / 美股期权在通达信协议内无数据
+- **EX 通道（港股 / 美股 / 期货 / 期权）的 K 线没有统一成交额**：`0x23FF` 帧内只有一个可复用槽位，
+  权益类市场（港股主板/基金/创业板、新三板、美股）该槽位是成交额，已回填；**期货 / 期权该槽位是持仓量，
+  所以它们的 `SecurityBar.amount` 恒为 `0.0`**（协议限制，不是 bug）。期货/期权的结算价在 `SecurityBar.settle`。
+  ⚠️ 港股主板/基金的 `vol` 单位是「手」（=100 股），`amount/vol` 是均价的 100 倍
 - **K 线时间戳统一为北京时间**（v0.6.2 起）。美股原始报文把「美东交易日日期」与「北京时间时分」
   拼在一起，库已自动归一化，`bar.datetime` 可直接排序 / 过滤；但**美股一个交易日横跨两个北京
   自然日**，按交易日聚合请用 `SecurityBar.trading_date`，不要用 `datetime.date()`

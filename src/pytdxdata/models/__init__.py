@@ -103,6 +103,10 @@ _US_EX_MARKETS: frozenset[int] = frozenset({int(ExMarket.US_STOCK)})
 _US_DAY_SPLIT_HOUR = 12
 
 
+# SecurityBar 上「后加的」可选字段：旧磁盘缓存反序列化时要补默认值（见 __setstate__）
+_BAR_LATE_FIELDS: tuple[str, ...] = ("settle",)
+
+
 @dataclass(slots=True)
 class SecurityBar:
     """K线记录（价格单位：元）。跨市场统一模型（A股/港股/美股/期货共用）。
@@ -110,6 +114,10 @@ class SecurityBar:
     时间戳口径**统一为北京时间**：A股/港股/期货原始即为北京时间；美股原始是
     「日期=美东交易日 + 时分=北京时间」的混合值，构造时已还原为真实北京时间
     （见 ``__post_init__``）。该 bar 归属的交易日见 :attr:`trading_date`。
+
+    ``amount`` / ``settle`` 的可取性**按通道**：A股标准/MAC 通道两者都有；
+    EX 通道（0x23FF）一个 32B 记录里只有**一个** 4B 槽位可复用，权益类市场用它
+    装成交额、期货期权类用它装结算价，两者不可能同时拿到 —— 详见 :attr:`amount`。
     """
     market: int
     code: str
@@ -117,14 +125,36 @@ class SecurityBar:
     high: float
     low: float
     close: float
-    vol: float      # 股票=股 / 转债=手（1 手=10 张，与 vipdoc 一致）
-    amount: float   # 元。⚠️ amount/vol 只在股票上等于均价；转债还要再 /10（手=10张）
+    # vol 单位按品种：A股/ETF/美股=股；转债=手（1手=10张）；⚠️港股主板/基金=手（1手=100股）
+    vol: float
+    # 元。⚠️ amount/vol 只在 A股上等于均价；转债还要再 /10（手=10张）、港股再 /100（手=100股）。
+    # ⚠️ EX 通道的期货/期权（中金所、上期所、郑商所、大商所及各期权）协议帧内**没有成交额**，
+    #   恒为 0.0 —— 要成交额请改用 EX 报价（``get_quotes``）或其它数据源。
+    amount: float
     year: int
     month: int
     day: int
     hour: int = 0
     minute: int = 0
     symbol: str = ""        # 规范化标的串（sz000001 / hk00700），由 API 层填充
+    # 结算价。仅 EX 通道的**期货/期权**有（日线才有值，分钟线为 None）；其余通道恒 None。
+    settle: float | None = None
+
+    def __setstate__(self, state: Any) -> None:
+        """反序列化兜底：早期版本写下的磁盘缓存里没有后加的可选字段（如 ``settle``）。
+
+        ``@dataclass(slots=True)`` 的默认反序列化只把 pickle 里存在的槽位塞回去，
+        缺键的槽位**不会**被赋默认值 —— 直接读 ``bar.settle`` 会抛 ``AttributeError``。
+        缓存键里没有 schema 版本号，所以这里必须容错，否则升级后读旧缓存即崩。
+        """
+        if isinstance(state, tuple) and len(state) == 2:   # slots 形式的 (dict, slots)
+            data = dict(state[1] or {})
+        else:
+            data = dict(state or {})
+        for name in _BAR_LATE_FIELDS:
+            data.setdefault(name, None)
+        for key, value in data.items():
+            object.__setattr__(self, key, value)
 
     def __post_init__(self) -> None:
         """美股（EX 通道）时间戳归一化：还原成真实北京时间。

@@ -47,6 +47,7 @@ nav:
       - 安装与配置: getting-started.md
       - 场景示例: cookbook.md
   - 命令行工具: cli.md
+  - DataFrame 输出: dataframe.md
   - API 参考:
       - 接口总览: api/index.md
       - TdxData 方法: api/tdxdata.md

@@ -52,6 +52,7 @@ df = pd.DataFrame([asdict(b) for b in bars])
 
 ```bash
 pip install pytdxdata        # 或 uv add pytdxdata
+pip install "pytdxdata[polars]"   # 需要 DataFrame 输出时才装（可选 extras）
 ```
 
 ## 可运行模板
@@ -82,11 +83,19 @@ async def main():
         # 分时（MAC 通道，今日或历史）
         minutes = await td.get_minutes(["sz000001"])
 
-        # 批量 K 线：多股票自动并发，池子会分配到不同服务器
+        # 批量 K 线：≥16 只自动走「多连接 × 单连接流水线」，池子把标的摊到多台服务器
         batch = await td.get_bars(
             ["sz000001", "sh600000"],
             KlinePeriod.DAY, count=240,
         )  # 平铺返回，每条带 .symbol 字段
+
+        # 全市场盘中实时：只拉已经走完的根数（10:00 → 30 根），5,200 只 1~2 秒
+        from datetime import datetime
+        live = await td.get_bars(
+            [s.symbol for s in await td.get_universe("sh")],
+            KlinePeriod.MIN_1, start_date=datetime.now(),
+        )
+        # pipeline=1 可关闭批量路径，退回逐只并发（结果一致，只是慢）
 
 asyncio.run(main())
 ```
@@ -182,6 +191,28 @@ await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 - **小数位表不用手动管，但可以手动刷**。`start()` 会检查当日缓存并后台同步一次（`SecurityInfo.decimal_point` 权威值）；要强制刷新用 `await td.sync_decimal_points()`，看同步状态用 `await td.decimal_point_status()`。`PYPYTDX_DATA_DISABLE_DECIMAL_SYNC=1` 可关闭后台同步。
 - 板块文件（`block_*.dat`）/ 行业（`tdxhy.cfg`）/ 财报（`gpcw*.zip`）是**服务器上的静态文件**，解析后是普通 dataclass，**落 JSON 后完全脱网可用**——适合做离线快照。
 
+## DataFrame 输出（v0.7+）
+
+表格型方法可以直出 DataFrame，**唯一开关是构造参数 `df`**，不要在调用处传 `df=True`（没有这个参数）：
+
+```python
+async with TdxData(df="polars") as td:      # 或 df="pandas"
+    df = await td.get_bars("sh600000", KlinePeriod.DAY, count=240)
+```
+
+| 事项 | 说明 |
+|---|---|
+| 安装 | `pip install "pytdxdata[polars]"` / `[pandas]` / `[dataframe]`；核心包仍零依赖 |
+| `df=None`（默认） | 行为与 0.6.x 完全一致，返回 `list[dataclass]` |
+| 报错 | `df` 取值非法 → `ValueError`；包没装 → `FrameBackendError`（启动即失败，不拖到第一次查询） |
+| 时间列 | `year/month/day/hour/minute` **被 `datetime` 替换**，另带 `trading_date`；`XdxrRecord` 给 `date` |
+| 嵌套 | `bid`/`ask` 展开成 `bid1_price`…`ask5_vol` 共 10 列；`fields` 字典 JSON 化成字符串列；`codes` 保持列表 |
+| 特殊容器 | `get_indicators` → bars+指标合并；`get_index_trade_stats(_multi)` → `minutes` 展开 + `index`/`date` 列；`get_kline_batch` / `get_minute_batch` → 纵向拼接成一张表 |
+| 不受影响 | `bytes` / `int` / `dict` / 单对象 / `tuple` / `list[float]` 类返回原样（`get_file`、`get_security_count`、`get_server_info`、`get_price_limits` 等） |
+| 空结果 | 列名齐全的空表；dtype 只由后端推断 |
+
+完整口径见 [DataFrame 输出](https://openbot-coder.github.io/pytdxdata/dataframe/)。
+
 ## 陷阱清单
 
 | 坑 | 后果 | 正确做法 |
@@ -200,6 +231,8 @@ await td.get_bars("cffex:IFL0", KlinePeriod.DAY, count=700)   # 期货合约
 | 拿指数逐笔的 `trade_count` 当笔数 | 拿到的是「均价×1000」，数值荒谬 | 用 `get_index_trade_stats(index)` 由成分累加 |
 | 拿 ETF/LOF 逐笔的 `trade_count` 当笔数 | 拿到的是「价格×1000」（`sh510310` 显示 3994 笔） | 看 `trade_count_available`，或 `symbols.has_order_count()` |
 | 拿深市 `399xxx` 的 `amount` 校验成分合计 | 比值 0.43，误以为数据错 | 深市指数 amount 是**全板块**口径（`sz399001`=深市全部 5081 亿），不是样本股 |
+| 在期货/期权 K 线上取 `amount` | 恒 0.0，误以为解析坏了 | EX `0x23FF` 帧内**没有成交额**（协议限制）；结算价看 `bar.settle`，成交额改用 `get_quotes` |
+| 用港股主板的 `amount / vol` 当均价 | 差 **100 倍** | 港股主板/基金的 `vol` 单位是**手（=100 股）**，要 `amount/vol/100`；港股创业板/美股才是股 |
 | 依赖实时性做信号 | 数据是 15 分钟前的 | 换券商实时源 |
 | 手动改包内 `servers.json` / 写死 IP | 容器只读、升级被覆盖、快节点捞不回来 | 日常靠内置的**当日测速缓存**自动选路；要强制指定就用 `PYPYTDX_DATA_{STANDARD,MAC,EX}_HOSTS` 环境变量 |
 

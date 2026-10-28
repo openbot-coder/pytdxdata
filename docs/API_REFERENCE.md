@@ -1,6 +1,6 @@
 # pytdxdata 对外接口清单
 
-> 以 `src/pytdxdata` 源码为准整理（v0.6.0）。分四类：Python API / 数据模型 / 辅助模块 / CLI。
+> 以 `src/pytdxdata` 源码为准整理（v0.7.0）。分四类：Python API / 数据模型 / 辅助模块 / CLI。
 >
 > 方法与代码的一致性由 `scripts/check_docs.py` 在 CI 中校验。
 
@@ -28,8 +28,9 @@ from pytdxdata import (
 | `cache_dir` | None | 磁盘缓存目录；None=仅内存缓存 |
 | `default_adjust` | `Adjust.NONE` | 默认复权方式 |
 | `max_inflight` | 64 | single-flight 并发上限 |
-| `pool_min` / `pool_max` | 3 / 12 | 动态池上下限 |
-| `mac_pool_cap` | 4 | 单台 MAC 服务器连接上限 |
+| `pool_min` / `pool_max` | 3 / 24 | 动态池上下限 |
+| `mac_pool_cap` / `std_pool_cap` / `ex_pool_cap` | 4 / 4 / 2 | 单台服务器连接上限 |
+| `df` | None | **DataFrame 后端**：`None`=返回 `list[dataclass]`（0.6.x 行为）、`"polars"`、`"pandas"`。需先装 extra：`pip install pytdxdata[polars]`，详见 [DataFrame 输出](dataframe.md) |
 
 生命周期：
 
@@ -40,6 +41,10 @@ from pytdxdata import (
 | `async with TdxData() as td:` | 上下文管理器，自动 start/close |
 
 ### 2.1 统一接口（v0.6+ 推荐）{#unified}
+
+> **DataFrame（v0.7+）**：本节的表格型方法在 `TdxData(df="polars")` / `df="pandas"` 时
+> 直接返回 DataFrame；`df=None`（默认）返回下表的 `list[...]`。列口径、时间列替换规则、
+> 不受影响的接口清单见 [DataFrame 输出](dataframe.md)。
 
 以下方法在 v0.6 新增，标的一律用字符串（`sz000001` / `hk00700` / `usAAPL` / `cffex:IFL0`）。
 
@@ -64,7 +69,7 @@ from pytdxdata import (
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
-| `get_bars(symbols, period=DAY, *, start=0, count=800, adjust=None, start_date=None, end_date=None, concurrency=6)` | `list[SecurityBar]` | 跨市场 K 线（自动判指数、复权走 MAC、并发分页、日期区间二分） |
+| `get_bars(symbols, period=DAY, *, start=0, count=800, adjust=None, start_date=None, end_date=None, concurrency=6, pipeline=None)` | `list[SecurityBar]` | 跨市场 K 线（自动判指数、复权走 MAC、并发分页；日期区间贴最新走倒推、历史中段走二分）。**≥16 只自动走多连接流水线**：`pipeline` 为每条连接的在途请求数（默认按单请求字节自适应 8~32，传 `1` 关闭），全市场 1 分钟 K 线取当天 43.6s → 5s 级 |
 | `get_indicators(symbols, indicators, *, period=DAY, count=30, adjust=None, params=None)` | `list[IndicatorSet]` | K 线+技术指标（MACD/KDJ/RSI/BOLL/MA/EMA） |
 
 #### 逐笔与分时
@@ -91,7 +96,7 @@ from pytdxdata import (
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
-| `get_kline(market, code, period, *, start=0, count=800, adjust=None, start_date=None, end_date=None)` | `list[SecurityBar]` | 主接口；count>页自动并发分页；复权走 MAC；支持日期区间（二分定位） |
+| `get_kline(market, code, period, *, start=0, count=800, adjust=None, start_date=None, end_date=None)` | `list[SecurityBar]` | 主接口；count>页自动并发分页；复权走 MAC；支持日期区间（贴最新倒推 / 中段二分） |
 | `get_kline_since(market, code, period, since, adjust=None)` | `list[SecurityBar]` | 增量便捷方法（≥since，含当天） |
 | `get_kline_batch(stocks, period, *, start=0, count=800, adjust=None, concurrency=6)` | `dict[str, list[SecurityBar]]` | 多股票并发，返回 {code: bars} |
 | `get_index_kline(market, code, period, *, start=0, count=800)` | `list[SecurityBar]` | 指数K线（含涨跌家数字段） |
@@ -199,7 +204,7 @@ from pytdxdata import (
 
 | 模型 | 关键字段 |
 |------|---------|
-| `SecurityBar` | market/code/open/high/low/close/vol/amount/year/month/day/hour/minute + `datetime` 属性 |
+| `SecurityBar` | market/code/open/high/low/close/vol/amount/year/month/day/hour/minute/symbol/**settle** + `datetime` 属性（`settle` 结算价仅 EX 期货/期权日线有值，其余为 `None`） |
 | `IndexBar` | 继承 `SecurityBar`（指数K线） |
 | `SecurityQuote` | price/pre_close/OHLC/vol/amount/s_vol/b_vol/`bid[5]`/`ask[5]`/server_time/trading_status/cur_vol/rise_speed/limit_up/limit_down/decimal_point/open_amount |
 | `SecurityInfo` | market/code/name/volunit/decimal_point/pre_close |
@@ -232,8 +237,18 @@ from pytdxdata import (
 | 股票 / ETF / LOF | 手（= 100 股） | 股 | **0.01** | 均价 ✓ |
 | 可转债（110/111/113/118/123/127/128） | 手（= 10 张） | **手** | **1.0** | 均价 **×10** ⚠️ |
 | 指数 | 百元（成交额/100） | 手 | — | 无意义（`amount` 是全板块口径） |
+| 港股主板 31 / 港股基金 49 | — | **手（= 100 股）** | — | 均价 **×100** ⚠️ |
+| 港股创业板 48 / 新三板 44 / 美股 74 | — | 股 | — | 均价 ✓ |
+| 期货 / 期权（EX 全市场） | — | 手/张 | — | **`amount` 恒 0.0**（帧内无成交额，见下） |
 
-算均价：股票 `amount / vol`；可转债 `amount / vol / 10`；跨品种统一用 `Σ(price×vol) / Σvol`。
+算均价：股票 `amount / vol`；可转债 `amount / vol / 10`；港股主板/基金 `amount / vol / 100`；跨品种统一用 `Σ(price×vol) / Σvol`。
+
+> ⚠️ **EX 通道（0x23FF）的成交额不是全市场都有的**。一条记录 32B = 4B 时间 + 28B 行情，
+> 28B 里只有**一个** 4B 槽位可复用，语义按市场分两类：
+> 权益类（港股主板/创业板/基金、新三板、美股）该槽位是**成交额**，`amount` 正常；
+> 期货期权类该槽位是**结算价**（体现在 `SecurityBar.settle`，日线才有值），
+> `amount` 恒 **0.0** —— 这是协议限制，不是解析漏读，要成交额请改用 `get_quotes` 或其它源。
+> 港股指数（27）/ 中证指数（62）该槽位语义未明，同样保守返回 `0.0`。
 
 > 可转债的价格标度、分时、逐笔已全量校验（16 只当日 + 8 只历史日）：分时末价 / 快照现价、`Σvol / 日线vol`、逐笔 VWAP vs `amount/(vol×10)` 比值均为 **1.000000**。
 
@@ -320,4 +335,13 @@ CLI 开关：`--discover`（三种协议全测并据实修正 `protocols`，同�
 | 逐笔成交 / 分时 | MAC |
 | 列表 / 数量 / 除权 / 财务 | 标准 |
 | 板块 / 竞价 / 异动 / 快照 / 资金流 / 服务器 / 分类报价 | MAC |
-| 港股 / 美股 / 期货 / 期权 | EX（端口 7727） |
+| 港股 / 美股 / 期货 / 期权 | EX（端口 7727，`0x23FF`） |
+
+> EX 通道的 K 线（`0x23FF`）字段口径与 A 股不同，见「量纲对照」下的注：
+> 权益类市场（港股/美股/新三板）有 `amount`；期货期权有 `settle`（结算价）但**没有** `amount`。
+
+**多标的 K 线（`get_bars` 传 ≥16 只）额外走「批量流水线」**：按上表选池后，
+多条连接并行、每条连接一次下发 `pipeline` 条请求（默认自适应 8~32），把 N 次往返
+折叠成 `N/pipeline` 次。只用实测最快的 12 台服务器（池里 24 台全用会被慢节点拖长尾）。
+`start_date=今天` 时只拉已走过的根数（10:00 → 30 根），盘中实时刷新因此只要 1~2 秒。
+流水线失败时该批自动交回逐只重试，不会丢数据。
