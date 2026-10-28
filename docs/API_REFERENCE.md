@@ -69,7 +69,7 @@ from pytdxdata import (
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
-| `get_bars(symbols, period=DAY, *, start=0, count=800, adjust=None, start_date=None, end_date=None, concurrency=6)` | `list[SecurityBar]` | 跨市场 K 线（自动判指数、复权走 MAC、并发分页；日期区间贴最新走倒推、历史中段走二分） |
+| `get_bars(symbols, period=DAY, *, start=0, count=800, adjust=None, start_date=None, end_date=None, concurrency=6, pipeline=None)` | `list[SecurityBar]` | 跨市场 K 线（自动判指数、复权走 MAC、并发分页；日期区间贴最新走倒推、历史中段走二分）。**≥16 只自动走多连接流水线**：`pipeline` 为每条连接的在途请求数（默认按单请求字节自适应 8~32，传 `1` 关闭），全市场 1 分钟 K 线取当天 43.6s → 5s 级 |
 | `get_indicators(symbols, indicators, *, period=DAY, count=30, adjust=None, params=None)` | `list[IndicatorSet]` | K 线+技术指标（MACD/KDJ/RSI/BOLL/MA/EMA） |
 
 #### 逐笔与分时
@@ -326,3 +326,9 @@ CLI 开关：`--discover`（三种协议全测并据实修正 `protocols`，同�
 | 列表 / 数量 / 除权 / 财务 | 标准 |
 | 板块 / 竞价 / 异动 / 快照 / 资金流 / 服务器 / 分类报价 | MAC |
 | 港股 / 美股 / 期货 / 期权 | EX（端口 7727） |
+
+**多标的 K 线（`get_bars` 传 ≥16 只）额外走「批量流水线」**：按上表选池后，
+多条连接并行、每条连接一次下发 `pipeline` 条请求（默认自适应 8~32），把 N 次往返
+折叠成 `N/pipeline` 次。只用实测最快的 12 台服务器（池里 24 台全用会被慢节点拖长尾）。
+`start_date=今天` 时只拉已走过的根数（10:00 → 30 根），盘中实时刷新因此只要 1~2 秒。
+流水线失败时该批自动交回逐只重试，不会丢数据。

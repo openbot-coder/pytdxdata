@@ -175,6 +175,22 @@ _BAR_SPAN: dict[KlinePeriod, timedelta] = {
     KlinePeriod.MONTH: timedelta(days=31),
 }
 
+# ---- K线批量流水线（get_bars 多标的路径）----
+# 单只K线是「一请求一标的」，全市场 5,000 只就是 5,000 次往返。实测单连接
+# 串行 33ms/只 ≈ 1 个 RTT，**瓶颈是往返不是带宽**；同连接连续下发 pipe 条请求
+# （协议帧自描述 + 服务器按序应答）能把往返折叠掉。实测 24 台 × 8 流水：
+# 全市场 1 分钟K线取当天 43.6s → 5.1s。
+_BULK_MIN_SYMS = 16       # 低于此数量走逐只路径（流水线收益抵不过批量开销）
+_BULK_PIPE_MIN = 8        # 自适应深度下限
+_BULK_PIPE_MAX = 32       # 自适应深度上限（再深服务器会攒够一批才回，反而慢）
+_BULK_MAX_COUNT = 700     # MAC 单请求返回上限；超过只能逐只分页
+# 最多用几台服务器：池里 24 台全用反而更慢 —— 慢节点会成为长尾（最长的那台
+# 拖住整轮），实测 count=2 全市场 24 台 2.95s / 只取最快 12 台 1.45s。
+_BULK_MAX_CONNS = 12
+# 交易时段（分钟）：上午 9:30-11:30、下午 13:00-15:00，共 240 分钟
+_AM_OPEN, _AM_CLOSE = 9 * 60 + 30, 11 * 60 + 30
+_PM_OPEN, _PM_CLOSE = 13 * 60, 15 * 60
+
 # 自定义字段报价（0x122B/0x122C）基础字段位：昨收/开/高/低/现价/量/量比/额
 _QUOTE_BITS = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]
 _QUOTE_PAGE = 80          # 0x122B/0x122C 单次上限 80 只
@@ -194,6 +210,65 @@ _list_unsupported_warned: set[int] = set()   # 同一市场只 WARNING 一次
 
 # 港股系市场：逐笔走 EX 专用 16B 协议（0x23FC/0x2406），其余扩展市场走 MAC 0x122F
 _HK_MARKETS = frozenset({27, 31, 48, 49, 71, 98})
+
+
+def _elapsed_trading_minutes(now: datetime) -> int:
+    """今天到现在为止已过去的**交易分钟数**（0~240）。
+
+    只按钟点算，不区分节假日（非交易日时区间裁剪会把这些根全滤掉，不影响正确性）；
+    盘中调用是常态，10:00 只需 30 根而不是 240 根 —— 数据量直接差 8 倍。
+    """
+    m = now.hour * 60 + now.minute
+    if m < _AM_OPEN:
+        return 0
+    if m <= _AM_CLOSE:
+        return m - _AM_OPEN
+    if m < _PM_OPEN:
+        return 120                      # 午休：上午已走完
+    if m <= _PM_CLOSE:
+        return 120 + (m - _PM_OPEN)
+    return 240                          # 收盘后
+
+
+def _bars_for_range(period: KlinePeriod, start_dt: datetime,
+                    now: datetime) -> int:
+    """估算「从 ``start_dt`` 到最新」需要拉多少根（倒推初值）。"""
+    per_day = _BARS_PER_DAY.get(period, 1)
+    if start_dt.date() == now.date():
+        # 当天：按已过交易分钟数折算，别把一整天都拉下来（10:00 只需 30 根而非 240）
+        frac = _elapsed_trading_minutes(now) / 240
+        return max(1, int(per_day * frac) + 5)
+    days = max(0.0, (now - start_dt).total_seconds() / 86400.0)
+    return max(1, int(days * per_day * 1.6))
+
+
+def _auto_pipeline(count: int, pipeline: int | None) -> int:
+    """流水深度：默认按「在途字节数 ≈60KB」自适应，夹在 8~32。
+
+    轮数 = 请求数 / (连接数 × 深度)，深度越深往返折叠得越彻底；但请求太深时
+    服务器会把整批处理完才回，实测 24 台 depth=64 反而比 8 慢一倍（5.79s vs 2.95s）。
+    每根的应答固定 32 字节，所以「取 240 根」天然只用得着浅流水，
+    「只取最新 2 根」则要用满深流水。
+    """
+    if pipeline is not None:
+        return max(2, int(pipeline))
+    per_req = max(1, count * 32 + 33)
+    return max(_BULK_PIPE_MIN, min(_BULK_PIPE_MAX, 60_000 // per_req))
+
+
+def _norm_range(start_date, end_date) -> tuple[datetime | None, datetime | None]:
+    """日期参数归一化：``date`` → 当日 00:00 / 23:59:59.999999。"""
+    start_dt = None
+    if start_date is not None:
+        start_dt = (start_date if isinstance(start_date, datetime)
+                    else datetime.combine(start_date, datetime.min.time()))
+    end_dt = None
+    if end_date is not None:
+        end_dt = (end_date if isinstance(end_date, datetime)
+                  else datetime.combine(end_date, datetime.max.time()))
+        if end_dt.time() == datetime.min.time():
+            end_dt = end_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return start_dt, end_dt
 
 
 def _fields_tag(bits: Sequence[int] | None) -> str:
@@ -755,6 +830,7 @@ class TdxData:
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         concurrency: int = 6,
+        pipeline: int | None = None,
     ) -> list[SecurityBar]:
         """K线（多标的并发，自动判指数、自动复权选路、自动跨市场）。
 
@@ -766,12 +842,30 @@ class TdxData:
             adjust: 复权方式（默认用实例 ``default_adjust``）；``QFQ``/``HFQ`` 自动走 MAC 通道。
             start_date / end_date: 按日期区间取（与 start/count 互斥，优先日期过滤）。
                 只给 ``start_date`` 即增量更新语义（取该日期之后的全部K线）。
+            concurrency: 逐只路径的并发数（仅在对小批量/标准通道生效时使用）。
+            pipeline: **批量路径**每条连接同时在途的请求数。``None``（默认）按单请求
+                字节数自适应（约 60KB 在途，夹在 8~32）；传 ``1`` 关闭流水线走逐只。
+                批量路径把 N 次往返折叠成 ``N/pipeline`` 次 —— 全市场 5,000 只取当天
+                1 分钟K线从 43.6s 降到 5s 级。
 
         返回:
             ``list[SecurityBar]``，按入参标的顺序拼接，每根带 ``symbol``；组内按时间正序。
+
+        说明:
+            批量路径只在 A股/指数（非扩展市场）且区间贴着最新时启用；历史中段
+            仍需逐只二分定位，会回落到逐只路径（结果一致，只是慢一些）。
         """
         period = KlinePeriod(int(period))
         syms = parse_symbols(symbols)
+
+        # 批量路径：一次请求一标的，逐只走就是 N 次往返；多连接流水线能把往返压掉
+        if len(syms) >= _BULK_MIN_SYMS and pipeline != 1:
+            bulk = await self._bars_bulk(
+                syms, period, start=start, count=count, adjust=adjust,
+                start_date=start_date, end_date=end_date, pipeline=pipeline)
+            if bulk is not None:
+                return bulk
+
         sem = asyncio.Semaphore(max(1, concurrency))
 
         async def one(sym: Symbol) -> list[SecurityBar]:
@@ -782,6 +876,140 @@ class TdxData:
 
         groups = await asyncio.gather(*(one(s) for s in syms))
         return [b for g in groups for b in g]
+
+    async def _bars_bulk(
+        self, syms: Sequence[Symbol], period: KlinePeriod, *,
+        start: int, count: int, adjust: Adjust | None,
+        start_date: datetime | None, end_date: datetime | None,
+        pipeline: int | None,
+    ) -> list[SecurityBar] | None:
+        """多标的批量取K线（多连接流水线）。返回 ``None`` = 不适用，调用方回退逐只。
+
+        不适用只有两种情况：含扩展市场标的、需要历史中段二分定位。
+        """
+        if any(s.is_ex for s in syms):
+            return None
+        adj = self.default_adjust if adjust is None else adjust
+        pool, page = self._bulk_channel(period, adj)
+
+        def make_cmd(s: Symbol, o: int, c: int):
+            if pool is self._mac_pool:
+                return MacKlineCmd(s.market, s.code, period, adj, o, c)
+            if is_cn_index(s.market, s.code):
+                return GetIndexBarsCmd(s.market, s.code, period, o, c)
+            return GetSecurityBarsCmd(s.market, s.code, period, o, c)
+
+        if start_date is None and end_date is None:
+            pipe = _auto_pipeline(min(count, page), pipeline)
+            got = await self._bulk_bars(pool, make_cmd, syms, start, count, page, pipe,
+                                        period=period, adj=adj)
+            return [b for s in syms for b in (got.get(s.text) or [])]
+
+        start_dt, end_dt = _norm_range(start_date, end_date)
+        now = datetime.now()
+        if end_dt is not None and end_dt + _BACKTRACK_GRACE < now:
+            return None             # 历史中段：得先探总根数再二分，批量帮不上
+        if start_dt is None:
+            need = _BACKTRACK_MIN_BARS
+        else:
+            if start_dt > now + _BAR_SPAN.get(period, timedelta(days=1)):
+                return []           # 整段区间在未来
+            need = _bars_for_range(period, start_dt, now)
+        # 偏移方向是通道级属性：探一次（结果按通道缓存，全市场只付一次代价）
+        if not await self._kline_newest_at_zero(syms[0], period, adj):
+            return None
+
+        pipe = _auto_pipeline(min(need, page), pipeline)
+        got = await self._bulk_bars(pool, make_cmd, syms, 0, need, page, pipe,
+                                    period=period, adj=adj)
+        out: list[SecurityBar] = []
+        for s in syms:
+            bars = got.get(s.text) or []
+            if start_dt is not None:
+                bars = [b for b in bars if b.datetime >= start_dt]
+            if end_dt is not None:
+                bars = [b for b in bars if b.datetime <= end_dt]
+            out.extend(bars)
+        return out
+
+    def _bulk_channel(self, period: KlinePeriod, adj: Adjust):
+        """批量路径用哪个池 / 单请求最多几根。"""
+        if route_for("kline", adjust=adj, period=period) == "mac":
+            return self._mac_pool, _BULK_MAX_COUNT
+        return self._std_pool, KLINE_PAGE
+
+    async def _bulk_bars(
+        self, pool, make_cmd, syms: Sequence[Symbol],
+        start: int, count: int, page: int, pipeline: int, *,
+        period: KlinePeriod, adj: Adjust,
+    ) -> dict[str, list[SecurityBar]]:
+        """多连接 + 单连接流水线抓K线，按 ``symbol.text`` 归集。
+
+        为什么快：单只一请求，串行时候每只固定付一个 RTT（实测 33ms）；同一连接
+        连续发 ``pipeline`` 条请求，服务器按序应答，于是 ``pipeline`` 只只共付
+        一个 RTT。再叠加多台服务器并行（每台 1 连接，尊重 per_server_cap），
+        实测全市场 1 分钟K线取当天：43.6s → 5s 级。
+
+        单请求装不下 ``start+count`` 时按 ``page`` 切页，多页与其他标的的请求
+        混在同一批里流水线发出去（不是逐只串行翻页）。
+        """
+        plan: list[tuple[int, int]] = []
+        off, remain = start, start + count
+        while remain > 0:
+            take = min(page, remain)
+            plan.append((off, take))
+            off += take
+            remain -= take
+
+        tasks: deque[tuple[Symbol, int, int]] = deque(
+            (s, o, c) for s in syms for o, c in plan)
+        n_conn = min(len(tasks), pool.max_size, _BULK_MAX_CONNS,
+                     max(2, -(-len(tasks) // max(1, pipeline * 4))))
+        await pool.warm(n_conn)      # 并发建连；acquire 建连是串行的，先热好
+        held = await pool.acquire_many(n_conn)
+        if not held:
+            return {}
+
+        by_text = {s.text: s for s in syms}
+        acc: dict[str, list[SecurityBar]] = {}
+        retry: dict[str, Symbol] = {}
+
+        async def worker(pc) -> None:
+            broken = False
+            try:
+                while tasks:
+                    batch: list[tuple[Symbol, int, int]] = []
+                    while tasks and len(batch) < pipeline:
+                        batch.append(tasks.popleft())
+                    cmds = [make_cmd(s, o, c) for s, o, c in batch]
+                    try:
+                        res = await pc.execute_pipeline(cmds)
+                    except Exception:
+                        # 流水线中途失败 = 响应流已错配，连接作废、整批交回逐只重试
+                        broken = True
+                        for s, _, _ in batch:
+                            retry[s.text] = s
+                        return
+                    for (s, _, _), bars in zip(batch, res):
+                        acc.setdefault(s.text, []).extend(bars)
+            finally:
+                await pool.release(pc, broken=broken)
+
+        await asyncio.gather(*(worker(pc) for pc in held))
+        # 连接全挂时 worker 会提前 return，队列里剩下的标的没人取 —— 一并交回逐只，
+        # 否则会**静默少数据**（实测 20 只只回 16 只）。
+        while tasks:
+            s, _, _ = tasks.popleft()
+            retry.setdefault(s.text, s)
+        out = {k: self._finish_bars(v, by_text[k]) for k, v in acc.items()}
+        for text, s in retry.items():
+            try:
+                out[text] = await self._bars_one(
+                    s, period, start=start, count=count, adjust=adj,
+                    start_date=None, end_date=None)
+            except Exception:
+                out.setdefault(text, [])
+        return out
 
     async def _bars_one(
         self, sym: Symbol, period: KlinePeriod, *,
@@ -874,15 +1102,7 @@ class TdxData:
         「取今天」「增量到最新」都贴着右端，占了实际使用的绝大多数。
         """
         # 归一化日期边界
-        start_dt = (start_date if isinstance(start_date, datetime)
-                    else datetime.combine(start_date, datetime.min.time())) \
-            if start_date is not None else None
-        end_dt = (end_date if isinstance(end_date, datetime)
-                  else datetime.combine(end_date, datetime.max.time())) \
-            if end_date is not None else None
-        # end_date 传入 datetime 但时间为 00:00 时视为"当天结束"
-        if end_dt is not None and end_dt.time() == datetime.min.time().replace(tzinfo=None):
-            end_dt = end_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+        start_dt, end_dt = _norm_range(start_date, end_date)
 
         # 快路径：区间右端贴着最新 → 从最新倒推，1~3 次往返
         fast = await self._bars_backtrack(sym, period, adjust, start_dt, end_dt)
@@ -965,8 +1185,9 @@ class TdxData:
         # 初值按时间跨度估根数：一天内 1 次就够，长区间也基本 1 次到位
         count = _BACKTRACK_MIN_BARS
         if start_dt is not None:
-            days = max(0.0, (ref - start_dt).total_seconds() / 86400.0)
-            count = max(count, int(days * _BARS_PER_DAY.get(period, 1) * 1.6))
+            need = _bars_for_range(period, start_dt, ref)
+            # 当天（盘中）实际只要已走完的那几十根，别沿用一整天 240 根
+            count = max(need, 8) if start_dt.date() == ref.date() else max(count, need)
         count = min(count, _BACKTRACK_MAX_BARS)
 
         bars: list[SecurityBar] = []

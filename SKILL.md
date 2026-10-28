@@ -83,11 +83,19 @@ async def main():
         # 分时（MAC 通道，今日或历史）
         minutes = await td.get_minutes(["sz000001"])
 
-        # 批量 K 线：多股票自动并发，池子会分配到不同服务器
+        # 批量 K 线：≥16 只自动走「多连接 × 单连接流水线」，池子把标的摊到多台服务器
         batch = await td.get_bars(
             ["sz000001", "sh600000"],
             KlinePeriod.DAY, count=240,
         )  # 平铺返回，每条带 .symbol 字段
+
+        # 全市场盘中实时：只拉已经走完的根数（10:00 → 30 根），5,200 只 1~2 秒
+        from datetime import datetime
+        live = await td.get_bars(
+            [s.symbol for s in await td.get_universe("sh")],
+            KlinePeriod.MIN_1, start_date=datetime.now(),
+        )
+        # pipeline=1 可关闭批量路径，退回逐只并发（结果一致，只是慢）
 
 asyncio.run(main())
 ```

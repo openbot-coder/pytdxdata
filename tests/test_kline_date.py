@@ -131,8 +131,10 @@ async def test_middle_range_falls_back_to_bisect():
 
 @pytest.mark.asyncio
 async def test_future_range_returns_empty_quickly():
-    bars, calls = await _fetch(
-        _FakeConn, start_date=NEWEST + datetime.timedelta(days=1))
+    # 用相对 now 的未来，别用固定日期：固定日期会随运行日漂进 _BACKTRACK_GRACE
+    # （默认 1 天容差覆盖长假），倒推就成立、会多取一轮，断言随日期时绿时红。
+    future = datetime.datetime.now() + datetime.timedelta(days=5)  # noqa: DTZ001
+    bars, calls = await _fetch(_FakeConn, start_date=future)
 
     assert bars == []
     assert calls <= 3
