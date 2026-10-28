@@ -69,7 +69,7 @@ from pytdxdata import (
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
-| `get_bars(symbols, period=DAY, *, start=0, count=800, adjust=None, start_date=None, end_date=None, concurrency=6)` | `list[SecurityBar]` | 跨市场 K 线（自动判指数、复权走 MAC、并发分页、日期区间二分） |
+| `get_bars(symbols, period=DAY, *, start=0, count=800, adjust=None, start_date=None, end_date=None, concurrency=6)` | `list[SecurityBar]` | 跨市场 K 线（自动判指数、复权走 MAC、并发分页；日期区间贴最新走倒推、历史中段走二分） |
 | `get_indicators(symbols, indicators, *, period=DAY, count=30, adjust=None, params=None)` | `list[IndicatorSet]` | K 线+技术指标（MACD/KDJ/RSI/BOLL/MA/EMA） |
 
 #### 逐笔与分时
@@ -96,7 +96,7 @@ from pytdxdata import (
 
 | 方法 | 返回 | 说明 |
 |------|------|------|
-| `get_kline(market, code, period, *, start=0, count=800, adjust=None, start_date=None, end_date=None)` | `list[SecurityBar]` | 主接口；count>页自动并发分页；复权走 MAC；支持日期区间（二分定位） |
+| `get_kline(market, code, period, *, start=0, count=800, adjust=None, start_date=None, end_date=None)` | `list[SecurityBar]` | 主接口；count>页自动并发分页；复权走 MAC；支持日期区间（贴最新倒推 / 中段二分） |
 | `get_kline_since(market, code, period, since, adjust=None)` | `list[SecurityBar]` | 增量便捷方法（≥since，含当天） |
 | `get_kline_batch(stocks, period, *, start=0, count=800, adjust=None, concurrency=6)` | `dict[str, list[SecurityBar]]` | 多股票并发，返回 {code: bars} |
 | `get_index_kline(market, code, period, *, start=0, count=800)` | `list[SecurityBar]` | 指数K线（含涨跌家数字段） |

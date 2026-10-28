@@ -27,7 +27,7 @@ import time
 import warnings
 from collections import deque
 from collections.abc import Callable
-from datetime import date as _date, datetime
+from datetime import date as _date, datetime, timedelta
 from pathlib import Path
 from typing import Sequence
 
@@ -146,6 +146,35 @@ _KLINE_MAX_BARS: dict[KlinePeriod, int] = {
     KlinePeriod.MONTH: 500,
 }
 
+# 每交易日大约多少根（倒推时按时间跨度估要拉多少，估小了会多跑一轮）
+_BARS_PER_DAY: dict[KlinePeriod, float] = {
+    KlinePeriod.MIN_1: 240,
+    KlinePeriod.MIN_5: 48,
+    KlinePeriod.MIN_15: 16,
+    KlinePeriod.MIN_30: 8,
+    KlinePeriod.MIN_60: 4,
+    KlinePeriod.DAY: 1,
+    KlinePeriod.WEEK: 0.2,
+    KlinePeriod.MONTH: 0.05,
+}
+_BACKTRACK_MIN_BARS = 240      # 倒推起始根数：一天 1 分钟正好 240，一次命中
+_BACKTRACK_MAX_BARS = 20_000   # 单次别拉太多；超了回落到二分
+_BACKTRACK_ROUNDS = 5          # 最多放大 5 轮（240→7680）
+_BACKTRACK_GRACE = timedelta(days=10)   # 右端离最新多远还算「贴着最新」（覆盖长假）
+
+# 一根K线跨多长时间。K线时间戳标的是**该周期的结束时刻**，所以最新一根可能
+# 比 datetime.now() 略大（14:29 那根此刻还在走）——判断「右端贴最新」要给这个容差。
+_BAR_SPAN: dict[KlinePeriod, timedelta] = {
+    KlinePeriod.MIN_1: timedelta(minutes=1),
+    KlinePeriod.MIN_5: timedelta(minutes=5),
+    KlinePeriod.MIN_15: timedelta(minutes=15),
+    KlinePeriod.MIN_30: timedelta(minutes=30),
+    KlinePeriod.MIN_60: timedelta(hours=1),
+    KlinePeriod.DAY: timedelta(days=1),
+    KlinePeriod.WEEK: timedelta(days=7),
+    KlinePeriod.MONTH: timedelta(days=31),
+}
+
 # 自定义字段报价（0x122B/0x122C）基础字段位：昨收/开/高/低/现价/量/量比/额
 _QUOTE_BITS = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]
 _QUOTE_PAGE = 80          # 0x122B/0x122C 单次上限 80 只
@@ -258,6 +287,10 @@ class TdxData:
         if df is not None:
             get_backend(df)
         self._df_backend = df
+
+        # K线偏移方向是**通道级属性**（不是每只标的的属性），首次探测后实例内复用：
+        # 全市场 5,000 只各探 2 次往返 = 上万次请求，纯属浪费。
+        self._kline_dir_cache: dict[str, bool] = {}
 
         self.port = port
         self.timeout = timeout
@@ -830,10 +863,15 @@ class TdxData:
         start_date: datetime | None, end_date: datetime | None,
         adjust: Adjust | None,
     ) -> list[SecurityBar]:
-        """按日期区间取K线：先二分定位偏移，再只拉目标区间。
+        """按日期区间取K线：贴最新走倒推，历史中段才二分定位。
 
         关键坑：**偏移方向各通道不一致**（实测标准通道 offset 0 是最新一根、
         越大越老；MAC/EX 反过来），所以先探一次方向再二分，不做静态假设。
+
+        快慢两条路径（:meth:`_bars_backtrack` 优先）：
+        倒推 = 直接 ``count=N`` 拿最新 N 根再裁剪，1~3 次往返；
+        二分 = 先探总根数再 log2 次跳转，长周期上是 36+ 次串行往返。
+        「取今天」「增量到最新」都贴着右端，占了实际使用的绝大多数。
         """
         # 归一化日期边界
         start_dt = (start_date if isinstance(start_date, datetime)
@@ -846,6 +884,11 @@ class TdxData:
         if end_dt is not None and end_dt.time() == datetime.min.time().replace(tzinfo=None):
             end_dt = end_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
 
+        # 快路径：区间右端贴着最新 → 从最新倒推，1~3 次往返
+        fast = await self._bars_backtrack(sym, period, adjust, start_dt, end_dt)
+        if fast is not None:
+            return fast
+
         est = _KLINE_MAX_BARS.get(period, 10_000)
         total = await self._bar_total(sym, period, adjust, est)
         if total <= 0:
@@ -854,6 +897,7 @@ class TdxData:
 
         if desc:
             # offset 越大越老：[0,k) 全都 >= start_date，[j,∞) 全都 <= end_date
+            # 不做并行二分：两个协程同时抢连接会触发服务器侧限速，实测比串行更慢
             k = total
             if start_dt is not None:
                 k = await self._bisect_offset(
@@ -884,6 +928,86 @@ class TdxData:
         if end_dt is not None:
             bars = [b for b in bars if b.datetime <= end_dt]
         return bars
+
+    async def _bars_backtrack(
+        self, sym: Symbol, period: KlinePeriod, adjust: Adjust | None,
+        start_dt: datetime | None, end_dt: datetime | None,
+    ) -> list[SecurityBar] | None:
+        """从最新一根往前倒推目标区间（区间右端贴着最新时适用）。
+
+        返回 ``None`` 表示**不适用**（偏移方向相反 / 要的是历史中间段 /
+        区间太长放大不划算），调用方应回落到二分路径；返回列表表示已算完
+        （**空列表**也是有效结果，代表区间内无数据）。
+
+        为什么快：二分要先 ``_bar_total`` 翻倍探总根数（长周期 6 次）再跳
+        ``log2(总根数)`` 次，1 分钟 K 线约 36 次串行往返 = 4 秒级；
+        倒推只是「拿最新 N 根」，一次就能覆盖一天。
+
+        **标准通道不探测方向**：``_bars_one`` 的 ``count`` 路径本来就靠
+        「start=0 即最新端」这个协议事实，这里沿用同一假定，省掉 2 次往返
+        ——全市场 5,000 只时每只省 2 次，是几十秒的量级。
+        只有 MAC/EX 才真去探（它们 offset 方向相反）。
+        """
+        adj = self.default_adjust if adjust is None else adjust
+        span = _BAR_SPAN.get(period, timedelta(days=1))
+        now = datetime.now()
+
+        if not await self._kline_newest_at_zero(sym, period, adj):
+            return None         # offset 0 是最老端 → 倒推不成立，交给二分
+
+        if start_dt is not None and start_dt > now + span:
+            return []           # 整段区间都在未来
+        # 右端够不着最新（留 _BACKTRACK_GRACE 余量覆盖周末/长假）→ 走二分
+        if end_dt is not None and end_dt + _BACKTRACK_GRACE < now:
+            return None
+        ref = now
+
+        # 初值按时间跨度估根数：一天内 1 次就够，长区间也基本 1 次到位
+        count = _BACKTRACK_MIN_BARS
+        if start_dt is not None:
+            days = max(0.0, (ref - start_dt).total_seconds() / 86400.0)
+            count = max(count, int(days * _BARS_PER_DAY.get(period, 1) * 1.6))
+        count = min(count, _BACKTRACK_MAX_BARS)
+
+        bars: list[SecurityBar] = []
+        for _ in range(_BACKTRACK_ROUNDS):
+            bars = await self.get_bars(sym.text, period, start=0, count=count,
+                                       adjust=adjust)
+            if not bars:
+                return []
+            first = bars[0].datetime
+            # 覆盖到 start 即止；跨到自己之前的那一天也算够（K线连续，中间不会缺）
+            if start_dt is None or first <= start_dt or first.date() < start_dt.date():
+                break
+            if count >= _BACKTRACK_MAX_BARS:
+                return None
+            count = min(count * 2, _BACKTRACK_MAX_BARS)
+        else:
+            return None         # 放大到上限仍不够 → 交给二分
+
+        if start_dt is not None:
+            bars = [b for b in bars if b.datetime >= start_dt]
+        if end_dt is not None:
+            bars = [b for b in bars if b.datetime <= end_dt]
+        return bars
+
+    async def _kline_newest_at_zero(self, sym: Symbol, period: KlinePeriod,
+                                    adjust: Adjust) -> bool:
+        """K 线的 ``offset=0`` 是否就是**最新**一根（True 才能倒推）。
+
+        偏移方向是通道级属性，与具体标的无关，首次探测后按通道名缓存在实例上。
+        """
+        key = "ex" if sym.is_ex else route_for("kline", adjust=adjust, period=period)
+        cached = self._kline_dir_cache.get(key)
+        if cached is not None:
+            return cached
+        newest = await self._probe_bar(sym, period, adjust, 0)
+        if newest is None:
+            return False            # 探不到就别猜，交给二分去处理空数据
+        nxt = await self._probe_bar(sym, period, adjust, 1)
+        desc = nxt is None or nxt.datetime < newest.datetime
+        self._kline_dir_cache[key] = desc
+        return desc
 
     async def _bar_total(self, sym: Symbol, period: KlinePeriod,
                          adjust: Adjust | None, est: int) -> int:
