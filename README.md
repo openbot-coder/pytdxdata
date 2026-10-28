@@ -52,7 +52,7 @@ asyncio.run(main())
 ```python
 async with TdxData(df="polars") as td:       # 或 df="pandas"；需 pip install "pytdxdata[polars]"
     df = await td.get_bars("sh600000", KlinePeriod.DAY, count=240)
-# 列：market code open high low close vol amount datetime trading_date symbol
+# 列：market code open high low close vol amount datetime trading_date symbol settle
 ```
 
 时间字段会被**合并成一列 `datetime`**（不再有 year/month/day/hour/minute），五档报价展开成
@@ -118,6 +118,10 @@ uv run mkdocs serve            # 本地预览文档站
 - 行情来自通达信公开服务器，**15 分钟延时**；需实时数据请使用券商行情
 - 标准通道 K 线 `count < 100` 部分服务器返回空 → 分页器已强制 `min_page=100` 规避
 - 港股 / 美股期权在通达信协议内无数据
+- **EX 通道（港股 / 美股 / 期货 / 期权）的 K 线没有统一成交额**：`0x23FF` 帧内只有一个可复用槽位，
+  权益类市场（港股主板/基金/创业板、新三板、美股）该槽位是成交额，已回填；**期货 / 期权该槽位是持仓量，
+  所以它们的 `SecurityBar.amount` 恒为 `0.0`**（协议限制，不是 bug）。期货/期权的结算价在 `SecurityBar.settle`。
+  ⚠️ 港股主板/基金的 `vol` 单位是「手」（=100 股），`amount/vol` 是均价的 100 倍
 - **K 线时间戳统一为北京时间**（v0.6.2 起）。美股原始报文把「美东交易日日期」与「北京时间时分」
   拼在一起，库已自动归一化，`bar.datetime` 可直接排序 / 过滤；但**美股一个交易日横跨两个北京
   自然日**，按交易日聚合请用 `SecurityBar.trading_date`，不要用 `datetime.date()`

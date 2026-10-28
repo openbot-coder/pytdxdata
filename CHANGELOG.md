@@ -125,12 +125,26 @@
 - `SecurityBar` 新增可选字段 `settle`（默认 `None`）：K 线 DataFrame 因此多一列 `settle`，
   位置参数构造的老代码不受影响。
 
+### 升级
+
+```bash
+pip install -U pytdxdata                     # 只要 dataclass
+pip install -U "pytdxdata[polars]"           # 想直出 DataFrame
+```
+
+- **磁盘缓存不需要手动清**：`SecurityBar` 的 `settle` 由 `__setstate__` 兜底补默认值，
+  旧缓存照常可读；EX K 线缓存键已带 `@v2`，`amount` 恒 0 的旧记录会自动失效重取。
+- 新参数 `pipeline`（`get_bars`）默认自适应，**不传就是最优**；只有想显式退回旧的逐只路径时才传 `1`。
+
 
 ### 文档
 
 - 新增 [DataFrame 输出](https://openbot-coder.github.io/pytdxdata/dataframe/) 专页，
   `API_REFERENCE.md`（构造参数表补 `df` 与 `ex_pool_cap`、`pool_max` 默认值修正为 24）、
   `SKILL.md`、`llms.txt`、`README.md`、`mkdocs.yml` 导航同步。
+- 全站同步 0.7.0 口径：首页特性表与导航卡片、安装页（extras 与构造参数表补
+  `df` / `std_pool_cap` / `ex_pool_cap`）、场景示例的「转成 pandas」改为推荐 `df=` 开关、
+  数据模型页说明 dataclass 与 DataFrame 是同一份数据、README「已知限制」补 EX 成交额口径。
 
 ## [0.6.9] - 2026-10-23
 

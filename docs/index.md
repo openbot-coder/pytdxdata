@@ -35,8 +35,9 @@ asyncio.run(main())
 | ⚡ **并发分页** | 把大请求拆成显式 `start` 偏移的页，多连接并行拉取、按序拼接、失败换连接重试 |
 | 🔀 **双通道整合** | 标准通道（经典行情）+ MAC 通道（逐笔 / 复权 / 1分钟K线），按命令自动选路 |
 | 📄 **服务器文件解析** | 板块 `block_*.dat` / 行业 `tdxhy.cfg` / 历史财报 `gpcw*` **下载即解析**成 dataclass（纯 stdlib），无需自己拆二进制；文件名与索引不一致时自动纠正 |
-| 🚀 **批量下载** | `get_bars` / `get_minutes` 传标的列表即多股票并发，连接池自动分配到不同服务器 |
-| 📦 **零重型依赖** | 返回 `list[dataclass]`，pandas / polars 由调用方按需转换 |
+| 🚀 **批量下载** | `get_bars` / `get_minutes` 传标的列表即多股票并发，连接池自动分配到不同服务器；K 线走「多连接 × 单连接流水线」，全市场 5,225 只 1 分钟线取当天 **5~8 秒**（盘中增量 1~2 秒） |
+| 🐼 **DataFrame 直出** | `TdxData(df="polars")` / `df="pandas"` 让 42 个表格型接口直接返回 DataFrame；时间列自动合并成 `datetime`，五档报价自动展开。后端是可选 extras，**核心包仍零依赖** |
+| 📦 **零重型依赖** | 默认返回 `list[dataclass]`，行为与 0.6.x 完全一致，转不转 DataFrame 由你决定 |
 
 ## 从这里开始
 
@@ -66,11 +67,19 @@ asyncio.run(main())
 
     [:octicons-arrow-right-24: Cookbook](cookbook.md)
 
+- **直接要 DataFrame**
+
+    ---
+
+    `TdxData(df="polars")` 一行开关，42 个表格型接口直接出表，不用自己 `asdict`。
+
+    [:octicons-arrow-right-24: DataFrame 输出](dataframe.md)
+
 - **查接口签名**
 
     ---
 
-    28 个统一方法（+ 33 个 deprecated 别名），从 docstring 实时生成，不会过期。
+    35 个统一方法（+ 33 个 deprecated 别名），从 docstring 实时生成，不会过期。
 
     [:octicons-arrow-right-24: API 参考](api/index.md)
 
@@ -122,6 +131,7 @@ asyncio.run(main())
     - [安装与配置](getting-started.md)
     - [场景示例](cookbook.md)
     - [命令行工具](cli.md)
+    - [DataFrame 输出](dataframe.md)
 
 - **参考**
     - [接口总览](api/index.md)

@@ -2,8 +2,16 @@
 
 全部数据模型位于 `pytdxdata.models`，统一为 `@dataclass(slots=True)`。
 
-选择 dataclass 而不是 pandas DataFrame 是刻意的：**零依赖 + 零转换开销**，
-需要 DataFrame 时你自己转（一行的事，见 [场景示例 → 转成 pandas](../cookbook.md#to-pandas)）。
+默认（`df=None`）所有接口返回这些 dataclass —— **零依赖 + 零转换开销**。
+不想要 dataclass 就直接开 DataFrame 出口，不用自己 `asdict` 再建表：
+
+```python
+async with TdxData(df="polars") as td:       # 或 df="pandas"
+    df = await td.get_bars("sh600000", KlinePeriod.DAY, count=240)
+```
+
+列口径（时间列合并、五档展开、`fields` JSON 化）见 [DataFrame 输出](../dataframe.md)；
+两者是同一份数据，只是容器不同，**量纲与语义完全一致**。
 
 ## 导入方式
 

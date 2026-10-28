@@ -26,7 +26,7 @@ curl -o ~/.workbuddy/skills/pytdxdata/SKILL.md \
 ## 里面有什么
 
 - **三条必守约定** —— 唯一入口是 `TdxData` 且必须 `async with`；标的是字符串（如 `sh600000`）
-  而不是 `(market, code)` 元组；返回值是 `list[dataclass]` 而不是 DataFrame
+  而不是 `(market, code)` 元组；默认返回 `list[dataclass]`（要 DataFrame 得用 `TdxData(df="polars")` 显式声明后端）
 - **枚举取值表** —— `Market` / `KlinePeriod` / `Adjust` / `ExMarket` 的准确取值
 - **可运行模板** —— K 线、复权、报价、逐笔、分时、批量，全部是能直接跑的代码
 - **「想做什么 → 用哪个方法」决策表** —— 18 个常见需求的直接映射

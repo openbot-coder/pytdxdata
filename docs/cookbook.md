@@ -196,7 +196,18 @@ async def ex_markets():
 
 ## 转成 pandas {#to-pandas}
 
-包本身不带 pandas 依赖，但转换是一行的事：
+**0.7.0 起不用自己转了** —— 构造时声明一次后端，表格型接口直接返回 DataFrame：
+
+```python
+async with TdxData(df="pandas") as td:        # 或 df="polars"
+    df = await td.get_bars("sh600000", KlinePeriod.DAY, count=800)
+df = df.set_index("datetime")                  # 时间列已经合并好了
+```
+
+需要 `pip install "pytdxdata[pandas]"`（或 `[polars]` / `[dataframe]`），细节见
+[DataFrame 输出](dataframe.md)。
+
+如果只想对**某一处**手动转、不想受影响全局，仍可用 dataclass 自己拼：
 
 ```python
 import pandas as pd

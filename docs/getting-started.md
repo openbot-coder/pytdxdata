@@ -35,6 +35,23 @@
 
 安装后即可使用 `tdx` 命令行工具（见 [CLI 手册](cli.md)）。
 
+### 可选：DataFrame 后端（0.7.0+）
+
+想让表格型接口**直接返回 DataFrame**，需要额外装一个后端。核心包依旧零依赖，不装就完全不受影响：
+
+```bash
+pip install "pytdxdata[polars]"     # 只要 polars
+pip install "pytdxdata[pandas]"     # 只要 pandas
+pip install "pytdxdata[dataframe]"  # 两个都要
+```
+
+装上之后在构造时声明一次即可，详见 [DataFrame 输出](dataframe.md)：
+
+```python
+async with TdxData(df="polars") as td:      # 或 df="pandas"
+    df = await td.get_bars("sh600000", KlinePeriod.DAY, count=240)
+```
+
 ### 可选：uvloop 加速
 
 Linux / macOS 上可选用 `uvloop` 替换默认事件循环（Windows 不支持）：
@@ -63,8 +80,11 @@ asyncio.run(main())
 | `cache_dir` | `None` | 磁盘缓存目录；**`None` = 仅内存缓存**（进程退出即失效） |
 | `default_adjust` | `Adjust.NONE` | 默认复权方式，可被单次调用覆盖 |
 | `max_inflight` | `64` | single-flight 并发上限（同键请求合并） |
-| `pool_min` / `pool_max` | `3` / `12` | 动态连接池上下限 |
+| `pool_min` / `pool_max` | `3` / `24` | 动态连接池上下限 |
 | `mac_pool_cap` | `4` | 单台 MAC 服务器连接数上限 |
+| `std_pool_cap` | `4` | 单台标准服务器连接数上限 |
+| `ex_pool_cap` | `2` | 单台 EX 服务器连接数上限（EX 主机较少且较慢，压太高收益为负） |
+| `df` | `None` | 表格型接口的返回形态：`None` = `list[dataclass]`（与 0.6.x 一致）；`"polars"` / `"pandas"` = 直接返回 DataFrame。见 [DataFrame 输出](dataframe.md) |
 
 ### 典型配置
 
