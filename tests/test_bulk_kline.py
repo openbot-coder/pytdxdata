@@ -15,7 +15,9 @@ from pytdxdata import TdxData
 from pytdxdata.api import _auto_pipeline, _bars_for_range, _elapsed_trading_minutes
 from pytdxdata.models import KlinePeriod, SecurityBar
 
-NEWEST = datetime.datetime(2026, 10, 28, 15, 0)  # noqa: DTZ001 — 全项目用裸北京时间
+# 替身的时间锚点必须跟着**真实 now** 走：API 内部用 ``datetime.now()`` 判断「是不是今天」，
+# 用固定日期会在 CI（UTC 时区，与本地差 8 小时）上漂到别的时段分支，断言时绿时红。
+NEWEST = datetime.datetime.now().replace(microsecond=0)  # noqa: DTZ001
 
 
 def _bar(when: datetime.datetime, close: float = 10.0) -> SecurityBar:
@@ -186,7 +188,7 @@ async def test_dated_range_bulk_trims_to_start_date():
 
 @pytest.mark.asyncio
 async def test_dated_future_range_returns_empty_without_requests():
-    future = datetime.datetime.now() + datetime.timedelta(days=5)  # noqa: DTZ001
+    future = NEWEST + datetime.timedelta(days=5)
     bars = await _run(20, start_date=future)
 
     assert bars == []
