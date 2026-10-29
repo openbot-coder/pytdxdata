@@ -2,7 +2,7 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.7.1] - 2026-10-29
 
 ### 性能
 
@@ -853,7 +853,9 @@ pip install -U "pytdxdata[polars]"           # 想直出 DataFrame
 
 - 初始版本：动态连接池 + 双层 TTL 缓存 + 3 连接并发分页 + 双通道（标准 / MAC）+ 扩展市场（港股 / 美股 / 期货 / 期权）
 
-[Unreleased]: https://github.com/openbot-coder/pytdxdata/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/openbot-coder/pytdxdata/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/openbot-coder/pytdxdata/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/openbot-coder/pytdxdata/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/openbot-coder/pytdxdata/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/openbot-coder/pytdxdata/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/openbot-coder/pytdxdata/compare/v0.3.2...v0.4.0

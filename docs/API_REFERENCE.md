@@ -1,6 +1,6 @@
 # pytdxdata 对外接口清单
 
-> 以 `src/pytdxdata` 源码为准整理（v0.7.0）。分四类：Python API / 数据模型 / 辅助模块 / CLI。
+> 以 `src/pytdxdata` 源码为准整理（v0.7.1）。分四类：Python API / 数据模型 / 辅助模块 / CLI。
 >
 > 方法与代码的一致性由 `scripts/check_docs.py` 在 CI 中校验。
 
