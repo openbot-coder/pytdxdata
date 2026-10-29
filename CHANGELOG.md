@@ -2,6 +2,36 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 性能
+
+- **DataFrame 转换提速近一倍：24 万行 K 线 894ms → 462ms（polars）/ 1,001ms → 587ms（pandas）**。
+
+  0.7.0 的取列实现有两处浪费：每个单元格都套一层 Python 闭包（顺带做 `IntEnum` 判断），
+  而 `trading_date` 每行都重新格式化三个整数 —— 24 万行里这个值往往只有 **1~2 种**。
+
+  | 转换层（不碰网络） | 0.7.0 | 现在 |
+  |---|---|---|
+  | 5,225 行报价 → polars | 66 ms | **51 ms** |
+  | 5,225 行报价 → pandas | 74 ms | **62 ms** |
+  | 240,000 行 K 线 → polars | 1,038 ms | **444 ms** |
+  | 240,000 行 K 线 → pandas | 1,234 ms | **585 ms** |
+
+  端到端（缓存已热，1,000 只 × 240 根 1 分钟）：`df=None` 1,386ms、
+  polars 1,768ms（原 2,680ms）、pandas 1,976ms（原 2,848ms）。
+
+  - 普通列改用 `list(map(attrgetter(name), rows))`：取值发生在 C 层，不再每格建一个 Python 帧。
+  - `trading_date` 按「时间字段（除 minute 外）」缓存（`_TD_KEYS`）：A股/港股/期货一个交易日
+    一个键，美股靠键里的 `hour` 覆盖凌晨段跨日判断 —— 不依赖 `_US_DAY_SPLIT_HOUR` 的具体取值。
+  - `IntEnum` 归一化从「每格判断一次」改为「按列判断一次、需要时才整列转」。
+  - 逐字段等价有测试锁定（`test_every_bar_field_equals_model` 等 3 项），口径零变化。
+
+### 文档
+
+- `docs/dataframe.md` 性能一节改为**实测数据 + 何时该用/不该用 DataFrame 出口**的说明，
+  并把「缓存命中也要付转换成本」写清。
+
 ## [0.7.0] - 2026-10-28
 
 ### 新增

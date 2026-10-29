@@ -17,6 +17,7 @@ from pytdxdata import TdxData
 from pytdxdata import frames as _frames
 from pytdxdata.frames import FrameBackendError, framed, get_backend, to_frame
 from pytdxdata.models import (
+    ExMarket,
     IndexBar,
     IndexTradeStats,
     IndicatorSet,
@@ -323,3 +324,60 @@ def test_datetime_dtype_is_datetime_like():
     pl = pytest.importorskip("polars")
     df = to_frame([bar()], backend="polars")
     assert isinstance(df.schema["datetime"], pl.Datetime)
+
+
+# ---------------------------------------------------------------- 交易日列缓存
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_trading_date_multi_key_batch_matches_model(backend):
+    """一批里混着 A股与美股、跨 0~23 点，逐行都要等于模型自己的 ``trading_date``。
+
+    ``trading_date`` 是按「时间字段」缓存算出来的（240k 行常只有 1~2 个键），
+    这里专门造出「多键同批」的极端情形，防止缓存键漏掉参与计算的因素。
+
+    注意：美股的跨日处理在 ``SecurityBar.__post_init__`` 里就做完了（凌晨段
+    的年月日会被推进一天），所以 ``trading_date`` 对每个 bar 只是自然日，
+    真正会分叉的是 ``datetime`` —— 两者都要逐行核对。
+    """
+    batch = []
+    for market in (int(Market.SH), int(ExMarket.US_STOCK)):
+        for hour in range(24):
+            batch.append(bar(market=market, hour=hour, minute=15))
+    df = to_frame(batch, backend=backend)
+    got_td = [cell(df, backend, "trading_date", i) for i in range(rows(df, backend))]
+    got_dt = [cell(df, backend, "datetime", i) for i in range(rows(df, backend))]
+    assert got_td == [b.trading_date for b in batch]
+    assert got_dt == [b.datetime for b in batch]
+    # 美股凌晨段的 datetime 确实落在下一天（否则这条测试等于没测）
+    us = [b for b in batch if b.market == int(ExMarket.US_STOCK)]
+    assert {b.datetime.date().isoformat() for b in us} == {"2026-10-27", "2026-10-28"}
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_minute_trading_date_cache_matches_model(backend):
+    """分时的 ``day_offset`` 也参与交易日计算，缓存键不能漏。"""
+    batch = [
+        MinuteBar(price=10.0, vol=1.0, hour=9, minute=30, date=20261027),
+        MinuteBar(price=10.0, vol=1.0, hour=21, minute=30, date=20261027,
+                  market=int(ExMarket.US_STOCK)),
+        MinuteBar(price=10.0, vol=1.0, hour=3, minute=0, date=20261027,
+                  market=int(ExMarket.US_STOCK), day_offset=1),
+    ]
+    df = to_frame(batch, backend=backend)
+    got = [cell(df, backend, "trading_date", i) for i in range(rows(df, backend))]
+    assert got == [b.trading_date for b in batch]
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_every_bar_field_equals_model(backend):
+    """逐字段等价：DataFrame 的每个值都必须等于 dataclass 的同名字段。
+
+    这条是取列路径（``attrgetter`` 批量取 + 按列转 Enum）改动的兜底，
+    避免「快是快了，但某列悄悄串了值」。
+    """
+    src = bar(minute=15, settle=3.5)
+    df = to_frame([src], backend=backend)
+    for name in cols(df, backend):
+        want = getattr(src, name)
+        assert cell(df, backend, name) == want, name
