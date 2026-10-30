@@ -5,6 +5,7 @@ import struct
 
 from ..._binary import unpack_from
 from ...models import SecurityQuote
+from ...symbols import is_cn_index
 from ..price import get_price
 from ..volume import get_volume
 from .base import BaseCommand
@@ -161,13 +162,49 @@ def price_decimal_digits(market: int, code: str) -> int:
     return _decimal_digits_static(m, code)
 
 
-def format_server_time(raw: int) -> str:
-    """服务器时间编码：小时 + 百万分之一小时。14999212 -> 14:59:57.163"""
-    hours, fractional_hour = divmod(raw, 1_000_000)
-    total_millis = fractional_hour * 3600 // 1000
-    minutes, remainder = divmod(total_millis, 60_000)
-    seconds, millis = divmod(remainder, 1000)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{millis:03d}"
+_SERVER_TIME_SKEW = 40
+"""服务端在「50~59 秒」段会写成「90~99」秒，整数值固定多 40×10**d。"""
+
+
+def format_server_time(raw: int, digits: int = 2) -> str:
+    """报价快照时间解码：十进制数字拼接 ``HH MM SS`` + ``digits`` 位小数。
+
+    编码（2026-10-30 盘中实测确定）::
+
+        整数 = HH*10**(4+d) + MM*10**(2+d) + SS*10**d + 小数
+        d    = 该品种**价格小数位**（股票 2 / ETF·LOF·B股 3 / 国债·回购 4）
+
+    实测样例：``13224002``（d=2）→ ``13:22:40.02``；``132245903``（d=3）→
+    ``13:22:45.903``；``1310228050``（d=4）→ ``13:10:22.8050``。
+
+    历史错误（0.8.0 修正）：此前按「小时 + 百万分之一小时」解码 —— 用
+    ``divmod(raw, 1_000_000)`` 取小时、余数按每秒 3600/1e6 折算。股票会把
+    11:29:59 解成 **11:17:57**（基准错了、速率也只有真实时钟的 53%），
+    ETF / 债券更会解出 ``113:00:21.222`` 这种小时 > 23 的非法值。
+
+    ⚠️ 服务端怪癖：**SS 落在 50~59 秒时写成 90~99**（编码值 +40 秒）。实测
+    3 分钟连续采样，未修正时该区间的滞后会从稳定的 10.6 秒突然变成 -29.4 秒
+    （正好差 40）。因此这里对 ``SS >= 60`` 一律减 40 秒还原。
+
+    ⚠️ 指数（``sh000001`` / ``sz399001`` …）该字段**不是**这只时钟：解出来
+    MM 常 > 59、且不同指数互相矛盾（同一时刻 000001 是 12:89、399001 是 12:15），
+    协议里没有给出可用信息。这类返回值一律为空串，不要编造时间；要指数时间
+    请用 :meth:`~pytdxdata.api.TdxData.get_minutes` 或 K 线。
+    """
+    if raw <= 0:
+        return ""
+    d = digits if 0 <= digits <= 6 else 2
+    scale = 10 ** d
+    frac = raw % scale
+    rest = raw // scale
+    seconds = rest % 100
+    minutes = (rest // 100) % 100
+    hours = rest // 10000
+    if seconds >= 60:
+        seconds -= _SERVER_TIME_SKEW
+    if hours > 23 or minutes > 59 or not 0 <= seconds <= 59:
+        return ""
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{frac:0{d}d}"
 
 
 class GetSecurityQuotesCmd(BaseCommand[list[SecurityQuote]]):
@@ -235,13 +272,14 @@ class GetSecurityQuotesCmd(BaseCommand[list[SecurityQuote]]):
             pos += 4
 
             code = code_b.decode("utf-8").rstrip("\x00")
-            divisor = 10 ** price_decimal_digits(market_b, code)
+            dp = price_decimal_digits(market_b, code)
+            divisor = 10 ** dp
             p = price_raw / divisor
             results.append(SecurityQuote(
                 market=market_b, code=code, price=p,
                 cur_vol=float(cur_vol),
                 rise_speed=_rise_speed / 100.0,
-                decimal_point=price_decimal_digits(market_b, code),
+                decimal_point=dp,
                 open_amount=float(_unknown_3),
                 pre_close=(price_raw + last_close_diff) / divisor,
                 open=(price_raw + open_diff) / divisor,
@@ -250,8 +288,8 @@ class GetSecurityQuotesCmd(BaseCommand[list[SecurityQuote]]):
                 vol=float(vol), amount=amount, s_vol=float(s_vol), b_vol=float(b_vol),
                 bid=[((price_raw + d) / divisor, v) for d, v in bid],
                 ask=[((price_raw + d) / divisor, v) for d, v in ask],
-                server_time=format_server_time(unknown_0),
+                server_time="" if is_cn_index(market_b, code)
+                else format_server_time(unknown_0, dp),
                 trading_status=trading_status,
             ))
-        return results
         return results
