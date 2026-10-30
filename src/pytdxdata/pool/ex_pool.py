@@ -37,6 +37,9 @@ class ExPoolTimeoutError(ConnectionError):
 class ExPool:
     """EX通道连接池（港股/期货，端口7727，连接时自动login）。"""
 
+    FAIL_COOLDOWN = 30.0
+    """握手失败后拉黑该主机的秒数（EX 节点少，冷却比标准池短）。"""
+
     def __init__(self, servers: list[str], *, timeout: float = 10.0,
                  min_size: int = 2, max_size: int = 6,
                  per_server_cap: int = 1,
@@ -58,6 +61,9 @@ class ExPool:
         self._total = 0
         self._closed = False
         self._cond = asyncio.Condition()
+        # 死节点短期拉黑：一台 EX 主机握手失败后，后续 acquire 直接绕开它，
+        # 而不是每次都再付一遍 ``self.timeout`` 的握手超时。
+        self._fail_until: dict[str, float] = {}
 
     async def start(self) -> None:
         async with self._cond:
@@ -72,6 +78,7 @@ class ExPool:
                     self._server_count[host] = self._server_count.get(host, 0) + 1
                 except Exception as e:
                     log.warning("EX连接失败 %s: %s", host, str(e)[:60])
+                    self._fail_until[host] = time.monotonic() + self.FAIL_COOLDOWN
 
     async def close(self) -> None:
         self._closed = True
@@ -94,8 +101,11 @@ class ExPool:
         if timeout is None:
             timeout = self.acquire_timeout
         deadline = None if timeout is None else time.monotonic() + timeout
-        async with self._cond:
-            while True:
+        avoid: set[str] = set()   # 本次 acquire 里已经握手失败、别再试的主机
+        while True:
+            new_conn = None
+            new_host = None
+            async with self._cond:
                 # 1. 优先借用空闲连接（过期则丢弃，槽位在锁内回收）
                 if self._idle:
                     _, conn = self._idle.pop()
@@ -107,44 +117,65 @@ class ExPool:
                     self._server_count[conn.host] = max(0, self._server_count.get(conn.host, 0) - 1)
                     self._schedule_close(conn)
 
-                # 2. 可扩容 → 锁内预留槽位，锁外建连
-                new_conn = None
-                new_host = None
+                # 2. 可扩容 → 锁内预留槽位，锁外建连（不能持锁做网络 IO）
                 if self._total < self.max_size and self.servers:
-                    host = self._next_available_server()
+                    host = self._next_available_server(avoid)
                     if host is not None:
                         self._total += 1
                         self._server_count[host] = self._server_count.get(host, 0) + 1
-                        new_conn = ExTdxConnection(host, 7727, self.timeout, self.handshake_map.get(host, self.handshake))
+                        new_conn = ExTdxConnection(
+                            host, 7727, self.timeout,
+                            self.handshake_map.get(host, self.handshake))
                         new_host = host
-                if new_conn is not None:
-                    # 锁外网络 IO：连接失败回滚槽位后继续等待
+                    elif avoid and all(h in avoid for h in self.servers):
+                        # 所有主机本次都试过了、全失败：等下去也不会有结果
+                        raise ExPoolTimeoutError(self, timeout)
+
+                # 3. 没抢到槽位 → 在锁内排队等 release 唤醒（waiter 必须持锁）
+                if new_conn is None:
+                    now = time.monotonic()
+                    if deadline is not None and now >= deadline:
+                        raise ExPoolTimeoutError(self, timeout)
                     try:
-                        await new_conn.connect()
-                        return new_conn
-                    except Exception as e:
-                        log.warning("EX扩容失败 %s: %s", new_host, str(e)[:60])
-                        async with self._cond:
-                            self._total = max(0, self._total - 1)
-                            self._server_count[new_host] = max(0, self._server_count.get(new_host, 0) - 1)
+                        if deadline is None:
+                            await self._cond.wait()
+                        else:
+                            await asyncio.wait_for(self._cond.wait(), timeout=deadline - now)
+                    except asyncio.TimeoutError:
+                        raise ExPoolTimeoutError(self, timeout) from None
+                    continue
 
-                # 3. 池满：排队等待 release 唤醒（或超时）
-                now = time.monotonic()
-                if deadline is not None and now >= deadline:
-                    raise ExPoolTimeoutError(self, timeout)
-                try:
-                    if deadline is None:
-                        await self._cond.wait()
-                    else:
-                        await asyncio.wait_for(self._cond.wait(), timeout=deadline - now)
-                except asyncio.TimeoutError:
-                    raise ExPoolTimeoutError(self, timeout)
+            # ---- 锁外建连 ----
+            try:
+                await new_conn.connect()
+                async with self._cond:
+                    self._fail_until.pop(new_host, None)
+                return new_conn
+            except Exception as e:
+                log.warning("EX扩容失败 %s: %s", new_host, str(e)[:60])
+                avoid.add(new_host)   # type: ignore[arg-type]
+                async with self._cond:
+                    self._total = max(0, self._total - 1)
+                    self._server_count[new_host] = max(0, self._server_count.get(new_host, 0) - 1)
+                    self._fail_until[new_host] = time.monotonic() + self.FAIL_COOLDOWN
+                    self._cond.notify_all()
+                continue
 
-    def _next_available_server(self) -> str | None:
+    def _next_available_server(self, avoid: set[str] | None = None) -> str | None:
+        """挑一台**未达并发上限**的主机：优先未冷却的，冷却中的只在别无选择时用。"""
+        avoid = avoid or set()
+        fallback: str | None = None
+        now = time.monotonic()
         for h in self.servers:
-            if self._server_count.get(h, 0) < self.per_server_cap:
+            if h in avoid:
+                continue
+            if self._server_count.get(h, 0) >= self.per_server_cap:
+                continue
+            if now >= self._fail_until.get(h, 0.0):
                 return h
-        return None
+            if fallback is None:
+                fallback = h
+        return fallback
 
     def _schedule_close(self, conn: ExTdxConnection) -> None:
         async def _close():

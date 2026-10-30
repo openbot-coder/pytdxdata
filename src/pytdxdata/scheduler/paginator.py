@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -81,15 +82,53 @@ class Paginator:
             stop = asyncio.Event()
             out: list[PageResult] = []
             out_lock = asyncio.Lock()
+            # 静态切片保证「每台连接都干活」（并发摊开），另备一个共享的
+            # ``leftover``：某个 worker 的连接坏掉退出时，它**没做完的页**会
+            # 放回这里，由还活着的 worker 接着做。老实现没有这层——一个
+            # worker 挂掉，它那一整份页就没人做了，要么整轮报错、要么静默缺页。
+            leftover: deque[tuple[int, int]] = deque()
+            q_lock = asyncio.Lock()
             k = len(slots)
             workers = [
                 asyncio.create_task(
-                    self._worker(slots[wid], jobs[wid::k], cmd_factory,
-                                 stop, out, out_lock, spec)
+                    self._worker(slots[wid], jobs[wid::k], leftover, q_lock,
+                                 cmd_factory, stop, out, out_lock, spec)
                 )
                 for wid in range(k)
             ]
             await asyncio.gather(*workers)
+            # 收尾补页：所有 worker 都退出后 leftover 里可能还剩页（连接全坏时会
+            # 发生）。再借一条**新连接**顺序把它们补完，最多两轮——否则 skip 的页
+            # 就变成静默缺数据（strict=False 时最危险：不报错、只是少几页）。
+            rounds = 0
+            while leftover and not stop.is_set() and rounds < 2:
+                rounds += 1
+                try:
+                    pc = await self.pool.acquire(timeout=5.0)
+                except PoolTimeoutError:
+                    break
+                slot = _Slot(pc)
+                progressed = False
+                try:
+                    while leftover and not stop.is_set():
+                        start, count = leftover[0]       # 成功后才出队，失败可重试
+                        items, ok = await self._fetch_one(
+                            slot, cmd_factory(start, count), count)
+                        if not ok:
+                            break
+                        leftover.popleft()
+                        progressed = True
+                        async with out_lock:
+                            out.append(PageResult(start=start, count=count, items=items))
+                        if spec.stop_when_short and len(items) < count:
+                            stop.set()
+                finally:
+                    if slot.pc is not None:
+                        await self.pool.release(slot.pc)
+                if not progressed:
+                    break
+            if leftover:
+                log.warning("分页调度：%d 页最终未取到（strict=False 留空）", len(leftover))
         finally:
             for s in slots:
                 if s.pc is not None:
@@ -117,21 +156,40 @@ class Paginator:
         return jobs
 
     async def _worker(
-        self, slot: _Slot, jobs: list[tuple[int, int]],
+        self, slot: _Slot,
+        jobs: list[tuple[int, int]],
+        leftover: "deque[tuple[int, int]]",
+        q_lock: asyncio.Lock,
         cmd_factory: Callable[[int, int], Any], stop: asyncio.Event,
         out: list[PageResult], out_lock: asyncio.Lock, spec: PageSpec,
     ) -> None:
-        for start, count in jobs:
-            if stop.is_set() or slot.pc is None:
-                return
-            items, ok = await self._fetch_one(slot, cmd_factory(start, count), count)
-            if not ok:
-                return   # 换连接失败 → 本 worker 退出（该页留空）
-            async with out_lock:
-                out.append(PageResult(start=start, count=count, items=items))
-            if spec.stop_when_short and len(items) < count:
-                stop.set()
-                return
+        i = 0
+        try:
+            while True:
+                if i < len(jobs):
+                    start, count = jobs[i]
+                    i += 1
+                else:
+                    # 自己的份额做完了 → 看看有没有别人掉下的活
+                    async with q_lock:
+                        if stop.is_set() or not leftover:
+                            return
+                        start, count = leftover.popleft()
+                if slot.pc is None or stop.is_set():
+                    return
+                items, ok = await self._fetch_one(slot, cmd_factory(start, count), count)
+                if not ok:
+                    return   # 换连接失败 → 本 worker 退出（剩余页在 finally 里交还）
+                async with out_lock:
+                    out.append(PageResult(start=start, count=count, items=items))
+                if spec.stop_when_short and len(items) < count:
+                    stop.set()
+                    return
+        finally:
+            rest = jobs[i:]
+            if rest:
+                async with q_lock:
+                    leftover.extendleft(reversed(rest))
 
     async def _fetch_one(self, slot: _Slot, cmd, page_size: int):
         """单页拉取，失败换连接重试。

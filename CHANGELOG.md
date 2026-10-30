@@ -2,7 +2,43 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.7.2] - 2026-10-30
+
+### 可靠性
+
+- **服务器中途掉线不再拖垮整批任务**。
+
+  此前三种调度细节会把「一台机器坏了」放大成「整批卡住」：
+
+  | 问题 | 后果 | 现在 |
+  |---|---|---|
+  | `acquire()` 在**池锁内**做 TCP 握手 + 探针 | 一台坏机握手卡满 `timeout`，所有并发协程一起停住 | 锁内只预留槽位，握手在锁外做 |
+  | 扩容失败分支 `continue` 且无截止检查 | 全节点失联时无限重试，永远不抛 `PoolTimeoutError` | 每台主机同一次 `acquire` 内只试一遍，试完立刻抛错 |
+  | 全灭后上层逐只重试 | 6,000 只 × 16 台 × 握手的空转 | 池级熔断 2 秒，熔断期内直接失败；有连接成功即解除 |
+
+  实测（16 台替身节点、6,000 只 × 240 根 1 分钟 K 线、跑起来 0.9 秒后 6 台变黑洞）：
+
+  | 场景 | 0.7.1 | 0.7.2 |
+  |---|---|---|
+  | 无节点故障 | 1.79 s | 1.80 s |
+  | 2/16 中途失联 | 2.28 s | **1.91 s** |
+  | 6/16 中途失联 | 2.97 s | **2.30 s** |
+  | **16/16 中途失联** | **>60 s 未返回** | **2.37 s** |
+
+- **批量 K 线失败批次从「事后串行补」改为「立刻回队」**。
+
+  流水线中途失败时，原来把整批攒到 `gather` 结束再逐只重试 —— 每只都要重付一次 RTT，
+  几百只就是十几秒长尾。现在失败批次直接 `extendleft` 回队首，由**其它健康连接**马上接手
+  （每只最多回队 2 次，超限后落进尾部并发兜底）。尾部兜底也从串行改成信号量并发。
+
+- **分页器不再因为一条连接坏掉而丢掉它那份页**。
+
+  老实现按 `jobs[wid::k]` 静态切片，一个 worker 退出，它那一整份页就没人做了。现在
+  worker 退出时把剩余页放回共享 `leftover`，还活着的 worker 会接着做；全部 worker 退出后
+  还有剩页，再借一条新连接补完（最多两轮）。
+
+- **EX 池同样改为锁外建连**，并给握手失败的主机加 30 秒拉黑（`ExPool.FAIL_COOLDOWN`），
+  避免每次 `acquire` 都重付一遍握手超时。
 
 ### 修复
 
@@ -885,7 +921,8 @@ pip install -U "pytdxdata[polars]"           # 想直出 DataFrame
 
 - 初始版本：动态连接池 + 双层 TTL 缓存 + 3 连接并发分页 + 双通道（标准 / MAC）+ 扩展市场（港股 / 美股 / 期货 / 期权）
 
-[Unreleased]: https://github.com/openbot-coder/pytdxdata/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/openbot-coder/pytdxdata/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/openbot-coder/pytdxdata/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/openbot-coder/pytdxdata/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/openbot-coder/pytdxdata/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/openbot-coder/pytdxdata/compare/v0.5.0...v0.6.0

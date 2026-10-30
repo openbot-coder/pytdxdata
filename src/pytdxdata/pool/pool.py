@@ -75,6 +75,15 @@ class PooledConnection:
 class DynamicPool:
     """动态连接池：按服务器维度统计连接数，每台服务器最多 per_server_cap 个连接。"""
 
+    BLACKOUT_COOLDOWN = 2.0
+    """全主机失败后的熔断时长（秒）。
+
+    全部服务器同时不可用时，每次 :meth:`acquire` 都会把每台主机握手一遍再放弃。
+    上层是「按标的逐只重试」的循环，6000 只标的 × 16 台主机 × 握手耗时 = 几分钟
+    的空转。熔断期内直接抛 :class:`PoolTimeoutError`，让调用方快速走完并返回，
+    冷却结束再试一次探测全灭是否恢复。
+    """
+
     def __init__(self, servers: list[str], *, port: int = DEFAULT_PORT,
                  timeout: float = 10.0, min_size: int = 4, max_size: int = 12,
                  per_server_cap: int = 1,
@@ -104,6 +113,7 @@ class DynamicPool:
         self._total = 0
         self._closed = False
         self._started = False
+        self._blackout_until = 0.0   # 全灭熔断截止时刻（monotonic）
         self._lock = asyncio.Lock()
         self._cond = asyncio.Condition(self._lock)
         self._reaper_task: asyncio.Task | None = None
@@ -127,10 +137,12 @@ class DynamicPool:
                 break
             try:
                 pc = await self._new_conn(host)
-                self._idle.append(pc)
-                self._total += 1
             except Exception as e:
                 log.warning("初始连接失败 %s: %s", host, str(e)[:60])
+                continue
+            async with self._lock:
+                self._register_locked(pc)
+                self._idle.append(pc)
 
         if self._total == 0:
             log.warning("连接池初始连接全部失败，将在使用时按需重试")
@@ -160,6 +172,12 @@ class DynamicPool:
         return out
 
     async def _new_conn(self, host: str) -> PooledConnection:
+        """建立一条连接（**纯 IO，不改任何计数**）。
+
+        计数由调用方在锁内用 :meth:`_register_locked` / :meth:`_reserve_locked`
+        单独完成——建连必须能在池锁之外进行，否则一台坏服务器的握手超时
+        会把所有并发协程一起冻住。
+        """
         conn = TdxConnection(host, self.port, self.timeout)
         await conn.connect()
         if self.probe_factory is not None:
@@ -168,12 +186,28 @@ class DynamicPool:
             except Exception:
                 await conn.close()
                 raise
-        pc = PooledConnection(conn, host)
+        return PooledConnection(conn, host)
+
+    def _register_locked(self, pc: PooledConnection) -> None:
+        """登记一条已建好的连接（调用方需持锁）。"""
         self._conns.add(pc)
-        self._server_count[host] = self._server_count.get(host, 0) + 1
+        self._server_count[pc.host] = self._server_count.get(pc.host, 0) + 1
+        self._total += 1
+        self.stats.total = self._total
         self.stats.created += 1
-        self.stats.total = self._total + 1
-        return pc
+
+    def _reserve_locked(self, host: str) -> None:
+        """锁内**预留**一个槽位（真正建连在锁外做）。"""
+        self._total += 1
+        self._server_count[host] = self._server_count.get(host, 0) + 1
+        self.stats.total = self._total
+
+    def _unreserve_locked(self, host: str) -> None:
+        """撤销预留（建连失败时回滚计数）。"""
+        self._total = max(0, self._total - 1)
+        if self._server_count.get(host, 0) > 0:
+            self._server_count[host] -= 1
+        self.stats.total = self._total
 
     async def close(self) -> None:
         self._closed = True
@@ -208,10 +242,19 @@ class DynamicPool:
         单连接约束下，池大小 = 服务器数 × per_server_cap。当并发请求超过池大小时，
         超额协程在此**排队等待**（基于 Condition），待其他协程 release 后被唤醒，
         而非立即超时放弃。默认 timeout=30s 防止在坏服务器场景下永久挂起。
+
+        **建连在池锁之外**：锁内只预留槽位，TCP 握手 + 探针放到锁外做。否则
+        一台坏服务器握手超时（最长 ``self.timeout``）期间，所有其它协程的
+        acquire/release 全部被这个锁挡住——5 台坏节点能把整批任务拖慢十几秒。
         """
         deadline = None if timeout is None else (time.monotonic() + timeout)
-        async with self._cond:
-            while True:
+        avoid: set[str] = set()   # 本次 acquire 里已握手失败的主机，别再重复试
+        while True:
+            if time.monotonic() < self._blackout_until:
+                raise PoolTimeoutError(
+                    "所有服务器均不可用（熔断中，稍后自动重试）")
+            host = ""
+            async with self._cond:
                 now = time.monotonic()
                 # 1. 优先借用空闲连接（跳过冷却中的服务器，避免反复选中坏节点）
                 while self._idle:
@@ -222,35 +265,65 @@ class DynamicPool:
                         return pc
                     self._drop_locked(pc)
 
-                # 2. 可扩容（未达上限且有可用服务器）→ 新建连接
-                if self._total < self.max_size:
-                    host = self._next_available_server()
-                    if host is None:
-                        # 兜底：全部服务器都在冷却中，而池子未满 —— 此时等 release
-                        # 永远等不到（没人持有），只能挑最健康的一台顶着冷却重试
-                        host = self._next_available_server(ignore_cooldown=True)
-                    if host:
-                        try:
-                            pc = await self._new_conn(host)
-                            self._total += 1
-                            self.stats.borrowed += 1
-                            return pc
-                        except Exception as e:
-                            log.warning("扩容连接失败 %s: %s", host, str(e)[:60])
-                            self.health.record_failure(host)
-                            # 循环重试：可能换下一台服务器
-                            continue
-
-                # 3. 池满：排队等待 release 唤醒（或超时）
+                # 2. 全坏场景下这里必须能退出：扩容失败分支会 continue，
+                #    没有这一行就会无限重试、永远不会抛 PoolTimeoutError。
                 if deadline is not None and now >= deadline:
                     raise PoolTimeoutError("连接池获取超时（连接数已达上限且无空闲）")
-                try:
-                    if deadline is None:
-                        await self._cond.wait()
-                    else:
-                        await asyncio.wait_for(self._cond.wait(), timeout=deadline - now)
-                except asyncio.TimeoutError:
-                    raise PoolTimeoutError("连接池获取超时（连接数已达上限且无空闲）")
+
+                # 3. 可扩容 → 锁内**只预留槽位**
+                if self._total < self.max_size:
+                    host = self._next_available_server(avoid=avoid) or ""
+                    if not host:
+                        # 兜底：全部服务器都在冷却中，而池子未满 —— 此时等 release
+                        # 永远等不到（没人持有），只能挑最健康的一台顶着冷却重试
+                        host = self._next_available_server(
+                            ignore_cooldown=True, avoid=avoid) or ""
+                    if host:
+                        self._reserve_locked(host)
+                    elif avoid and all(h in avoid for h in self.servers):
+                        # 本轮每台主机都握手失败过了 → 再等下去也不会有连接。
+                        # 同时熔断一小段时间，避免上层「逐只重试」把握手放大成
+                        # 成千上万次（实测 6000 标的能空转 60s+）。
+                        self._blackout_until = now + self.BLACKOUT_COOLDOWN
+                        raise PoolTimeoutError(
+                            f"所有服务器均不可用（{len(avoid)} 台均已失败）")
+
+                if not host:
+                    # 4. 池满/无可用服务器：排队等 release 唤醒（或超时）
+                    remaining = None if deadline is None else deadline - now
+                    try:
+                        if remaining is None:
+                            await self._cond.wait()
+                        else:
+                            await asyncio.wait_for(self._cond.wait(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        raise PoolTimeoutError(
+                            "连接池获取超时（连接数已达上限且无空闲）") from None
+                    continue
+
+            # ---- 锁外建连：失败只影响本次请求，不冻结其它协程 ----
+            try:
+                pc = await self._new_conn(host)
+            except Exception as e:
+                avoid.add(host)
+                async with self._cond:
+                    self._unreserve_locked(host)
+                    self._cond.notify_all()   # 槽位已回滚，唤醒排队者
+                self.health.record_failure(host)
+                log.warning("扩容连接失败 %s: %s", host, str(e)[:60])
+                continue
+            if self._closed:
+                await pc.close()
+                async with self._cond:
+                    self._unreserve_locked(host)
+                    self._cond.notify_all()
+                raise PoolTimeoutError("连接池已关闭")
+            # 槽位已在锁内预留，这里只补登记，不重复计数
+            self._conns.add(pc)
+            self.stats.created += 1
+            self.stats.borrowed += 1
+            self._blackout_until = 0.0   # 有连接成功 → 立刻解除熔断
+            return pc
 
     async def acquire_many(self, k: int) -> list[PooledConnection]:
         """批量借出 k 个连接（分页并发用），超额请求排队等待不丢。"""
@@ -262,8 +335,11 @@ class DynamicPool:
                 break
         return out
 
-    def _next_available_server(self, *, ignore_cooldown: bool = False) -> str | None:
-        ranked = self.health.rank(self.servers)
+    def _next_available_server(self, *, ignore_cooldown: bool = False,
+                               avoid: set[str] | None = None) -> str | None:
+        """挑一台主机（``avoid`` 里的跳过，用于同一次 acquire 内不重复试错）。"""
+        avoid = avoid or set()
+        ranked = self.health.rank([h for h in self.servers if h not in avoid])
         # 1. 优先选未冷却且未达并发上限的服务器
         for h in ranked:
             if self.health.in_cooldown(h) and not ignore_cooldown:
@@ -311,12 +387,20 @@ class DynamicPool:
         results = await asyncio.gather(
             *(self._new_conn(h) for h in hosts), return_exceptions=True)
         async with self._lock:
-            for pc in results:
-                if isinstance(pc, PooledConnection):
-                    self._total += 1
-                    self.stats.total = self._total
-                    if not self._closed and pc.alive:
-                        self._idle.append(pc)
+            for host, res in zip(hosts, results):
+                if not isinstance(res, PooledConnection):
+                    # 建连失败 → 记一次失败，后续 acquire 会把它排到队尾
+                    self.health.record_failure(host)
+                    continue
+                pc: PooledConnection = res
+                if self._closed or not pc.alive or self._total >= self.max_size:
+                    # 建好却发现池已满/已关闭：必须关掉，否则连接泄漏，
+                    # 而且 _total 会被虚增（老实现就在这儿漏计数）
+                    asyncio.create_task(self._safe_close(pc))
+                    continue
+                self._register_locked(pc)
+                self._idle.append(pc)
+            self._cond.notify_all()
 
     async def release(self, pc: PooledConnection, *, broken: bool = False) -> None:
         if self.stats.borrowed > 0:
