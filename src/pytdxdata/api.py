@@ -187,6 +187,9 @@ _BULK_MAX_COUNT = 700     # MAC 单请求返回上限；超过只能逐只分页
 # 最多用几台服务器：池里 24 台全用反而更慢 —— 慢节点会成为长尾（最长的那台
 # 拖住整轮），实测 count=2 全市场 24 台 2.95s / 只取最快 12 台 1.45s。
 _BULK_MAX_CONNS = 12
+# 流水线失败的一批最多回队几次。回队 = 交给**其它健康连接**立刻接手；
+# 上限保证全节点失联时不会无限打转，超限后落到尾部并发兜底。
+_BULK_MAX_RETRY = 2
 # 交易时段（分钟）：上午 9:30-11:30、下午 13:00-15:00，共 240 分钟
 _AM_OPEN, _AM_CLOSE = 9 * 60 + 30, 11 * 60 + 30
 _PM_OPEN, _PM_CLOSE = 13 * 60, 15 * 60
@@ -973,6 +976,7 @@ class TdxData:
         by_text = {s.text: s for s in syms}
         acc: dict[str, list[SecurityBar]] = {}
         retry: dict[str, Symbol] = {}
+        attempts: dict[str, int] = {}
 
         async def worker(pc) -> None:
             broken = False
@@ -985,10 +989,22 @@ class TdxData:
                     try:
                         res = await pc.execute_pipeline(cmds)
                     except Exception:
-                        # 流水线中途失败 = 响应流已错配，连接作废、整批交回逐只重试
+                        # 流水线中途失败 = 响应流已错配，连接作废。
+                        # 这一批**立刻放回队首**：其它健康连接会马上接手，
+                        # 不必等 gather 结束再串行补（老实现每条重试都要重新
+                        # 付一次 RTT，几百只就是十几秒的长尾）。
                         broken = True
-                        for s, _, _ in batch:
-                            retry[s.text] = s
+                        again: list[tuple[Symbol, int, int]] = []
+                        for item in batch:
+                            s = item[0]
+                            n = attempts.get(s.text, 0)
+                            if n < _BULK_MAX_RETRY:
+                                attempts[s.text] = n + 1
+                                again.append(item)
+                            else:
+                                retry[s.text] = s
+                        if again:
+                            tasks.extendleft(reversed(again))
                         return
                     for (s, _, _), bars in zip(batch, res):
                         acc.setdefault(s.text, []).extend(bars)
@@ -996,19 +1012,27 @@ class TdxData:
                 await pool.release(pc, broken=broken)
 
         await asyncio.gather(*(worker(pc) for pc in held))
-        # 连接全挂时 worker 会提前 return，队列里剩下的标的没人取 —— 一并交回逐只，
+        # 连接全挂时 worker 会提前 return，队列里剩下的标的没人取 —— 一并交回重试，
         # 否则会**静默少数据**（实测 20 只只回 16 只）。
         while tasks:
             s, _, _ = tasks.popleft()
             retry.setdefault(s.text, s)
         out = {k: self._finish_bars(v, by_text[k]) for k, v in acc.items()}
-        for text, s in retry.items():
-            try:
-                out[text] = await self._bars_one(
-                    s, period, start=start, count=count, adjust=adj,
-                    start_date=None, end_date=None)
-            except Exception:
-                out.setdefault(text, [])
+        if retry:
+            # 尾部兜底也并发做：坏节点把批次吐回来时可能有几十上百只，
+            # 串行重试等于把「一台机器卡住」放大成「整批卡住」。
+            sem = asyncio.Semaphore(max(2, min(len(retry), pool.max_size)))
+
+            async def rescue(text: str, s: Symbol) -> None:
+                async with sem:
+                    try:
+                        out[text] = await self._bars_one(
+                            s, period, start=start, count=count, adjust=adj,
+                            start_date=None, end_date=None)
+                    except Exception:
+                        out.setdefault(text, [])
+
+            await asyncio.gather(*(rescue(t, s) for t, s in retry.items()))
         return out
 
     async def _bars_one(
