@@ -139,6 +139,9 @@ class SecurityBar:
     symbol: str = ""        # 规范化标的串（sz000001 / hk00700），由 API 层填充
     # 结算价。仅 EX 通道的**期货/期权**有（日线才有值，分钟线为 None）；其余通道恒 None。
     settle: float | None = None
+    # 持仓量（手）。仅 EX 通道的**期货/期权**有（0x23FF 帧槽位 5）；其余通道恒 None。
+    # 权益类市场（港股/美股等）无此概念，归一化为 None。
+    position: float | None = None
 
     def __setstate__(self, state: Any) -> None:
         """反序列化兜底：早期版本写下的磁盘缓存里没有后加的可选字段（如 ``settle``）。

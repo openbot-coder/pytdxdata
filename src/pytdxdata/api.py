@@ -1077,28 +1077,43 @@ class TdxData:
     async def _bars_ex(self, sym: Symbol, period: KlinePeriod, adj: Adjust,
                        start: int, count: int) -> list[SecurityBar]:
         """扩展市场K线（EX 0x23FF；category=周期编码，与 TDXParams 一致）。"""
-        from .protocol.commands.ex_proto import GetExInstrumentBarsCmd
+        from .protocol.commands.ex_proto import GetExInstrumentBarsCmd, _EX_AMOUNT_MARKETS
         cat = int(period)
         fetch_count = max(700, start + count)
-        # extra 带的 @v2 是缓存 schema 标记：v2 起 EX K线开始回填 amount/settle，
-        # 旧版本写下的缓存里 amount 恒 0.0，必须让它们自然失效。
+        # extra 带的 @v3 是缓存 schema 标记：v3 起期货/期权回填估算 amount + position；
+        # 旧版本写下的缓存里 amount 恒 0.0、position 丢失，必须让它们自然失效。
         key = CacheKey("kline", sym.market, sym.code, period.name, start,
-                       fetch_count, f"{adj.name}@{cat}@v2")
+                       fetch_count, f"{adj.name}@{cat}@v3")
+        # 期货/期权乘数（估算成交额用）；未知品种乘数为 None → amount 保持 0.0
+        from .ex_multiplier import find_multiplier
+        from .symbols import _EX_PREFIX
+        mult = None
+        if sym.market not in _EX_AMOUNT_MARKETS:
+            mult = find_multiplier(_EX_PREFIX.get(sym.market, ""), sym.code, sym.market)
 
         async def fetch() -> bytes:
             rows = await self._fetch_paginated_ex(
                 lambda s2, c2: GetExInstrumentBarsCmd(sym.market, sym.code, cat, s2, c2),
                 PageSpec(page_size=700, total=fetch_count, min_page=100))
-            bars = [SecurityBar(
-                market=sym.market, code=sym.code,
-                year=d["year"], month=d["month"], day=d["day"],
-                hour=d.get("hour", 0), minute=d.get("minute", 0),
-                open=d["open"], high=d["high"], low=d["low"], close=d["close"],
-                vol=float(d.get("trade", 0) or 0),
-                # 权益类（港股/美股/新三板）真有成交额；期货期权的帧里没有，恒 0.0
-                amount=float(d.get("amount", 0.0) or 0.0),
-                settle=d.get("settle"),
-            ) for d in rows]
+            bars = []
+            for d in rows:
+                vol = float(d.get("trade", 0) or 0)
+                amount = float(d.get("amount", 0.0) or 0.0)
+                if amount == 0.0 and mult and vol:
+                    # 期货/期权：帧内无成交额，按收盘价估算（见 ex_multiplier 模块 docstring）
+                    amount = vol * float(d["close"]) * mult
+                pos = d.get("position", 0) or 0
+                bars.append(SecurityBar(
+                    market=sym.market, code=sym.code,
+                    year=d["year"], month=d["month"], day=d["day"],
+                    hour=d.get("hour", 0), minute=d.get("minute", 0),
+                    open=d["open"], high=d["high"], low=d["low"], close=d["close"],
+                    vol=vol,
+                    amount=amount,
+                    settle=d.get("settle"),
+                    # 权益类市场 position 恒 0 → None；期货/期权给真实持仓量
+                    position=float(pos) if pos else None,
+                ))
             return pack_payload(bars)
 
         bars = self._finish_bars(unpack_payload(await self._cache.get_or_fetch(key, fetch)), sym)

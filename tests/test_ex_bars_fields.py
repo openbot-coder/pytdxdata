@@ -132,6 +132,7 @@ async def test_bars_ex_backfills_amount_for_hk() -> None:
     assert bars[0].amount == pytest.approx(2_040_000.0)
     assert bars[0].vol == 2000
     assert bars[0].settle is None
+    assert bars[0].position is None    # 权益类无持仓量
 
 
 @pytest.mark.asyncio
@@ -140,7 +141,9 @@ async def test_bars_ex_backfills_settle_for_futures() -> None:
     bars = await td.get_bars("cffex_futures:IFL0", count=1)
 
     assert bars[0].settle == pytest.approx(4047.8)
-    assert bars[0].amount == 0.0
+    # v3 起期货按收盘价估算成交额：close 10.2 × vol 25392 × IF 乘数 200
+    assert bars[0].amount == pytest.approx(10.2 * 25392 * 200)
+    assert bars[0].position == 49_772.0
 
 
 # ---------- 旧磁盘缓存兼容 ----------
@@ -173,3 +176,45 @@ def test_ex_symbols_route_to_ex_path() -> None:
     """守住前提：上面对 31/47 的断言确实走的是 EX 通道。"""
     assert parse_symbols(["hk00700"])[0].is_ex
     assert parse_symbols(["cffex_futures:IFL0"])[0].is_ex
+
+
+# ---------- v3：期权持仓量 + 乘数表 ----------
+
+def test_multiplier_known_products() -> None:
+    from pytdxdata.ex_multiplier import find_multiplier
+    assert find_multiplier("cffex", "IFL0") == 200
+    assert find_multiplier("shf", "rb2611") == 10
+    assert find_multiplier("shf", "au2611") == 100
+    assert find_multiplier("dl", "i2501") == 100
+    assert find_multiplier("zz", "AP0") == 10
+
+
+def test_multiplier_unknown_returns_none() -> None:
+    from pytdxdata.ex_multiplier import find_multiplier
+    assert find_multiplier("shf", "xyz999") is None
+    assert find_multiplier("nosuch", "rb2611") is None
+
+
+def test_stock_option_multiplier() -> None:
+    from pytdxdata.ex_multiplier import find_multiplier
+    assert find_multiplier("sh_stock_option", "10011425") == 10_000
+
+
+@pytest.mark.asyncio
+async def test_bars_ex_option_position_backfilled() -> None:
+    """期权 K 线持仓量透传（用户主诉）：协议槽位 5 已解析，v3 起到 SecurityBar。"""
+    td = _fake_api({8: [_row(8, "10011425", position=123_456, trade=6373, settle=0.0887)]})
+    bars = await td.get_bars("sh_stock_option:10011425", count=1)
+
+    assert bars[0].position == 123_456.0
+    # 股票期权乘数 10000：close 10.2 × vol 6373 × 10000
+    assert bars[0].amount == pytest.approx(10.2 * 6373 * 10_000)
+
+
+@pytest.mark.asyncio
+async def test_bars_ex_unknown_multiplier_keeps_amount_zero() -> None:
+    """乘数表没有的品种：宁可不给 amount 也不编造。"""
+    td = _fake_api({30: [_row(30, "ZZZ2601", position=10, trade=5, settle=1.0)]})
+    bars = await td.get_bars("shf:ZZZ2601", count=1)
+    assert bars[0].amount == 0.0
+    assert bars[0].position == 10.0

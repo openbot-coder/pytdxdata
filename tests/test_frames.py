@@ -99,7 +99,7 @@ def test_bar_replaces_split_time_with_datetime(backend):
     df = to_frame([bar(), bar(minute=30)], backend=backend)
     assert cols(df, backend) == [
         "market", "code", "open", "high", "low", "close", "vol", "amount",
-        "datetime", "trading_date", "symbol", "settle",
+        "datetime", "trading_date", "symbol", "settle", "position",
     ]
     assert rows(df, backend) == 2
     assert cell(df, backend, "market") == 1
@@ -122,7 +122,7 @@ def test_empty_list_falls_back_to_annotation_hint(backend):
     assert rows(df, backend) == 0
     assert cols(df, backend) == [
         "market", "code", "open", "high", "low", "close", "vol", "amount",
-        "datetime", "trading_date", "symbol", "settle",
+        "datetime", "trading_date", "symbol", "settle", "position",
     ]
 
 
