@@ -92,7 +92,10 @@ from .protocol.commands.ex_ext import (
     GetExTransactionDataCmd,
     SymbolTickChartCmd,
 )
-from .protocol.commands.ex_proto import GetExInstrumentBarsCmd
+from .protocol.commands.ex_proto import (
+    GetExInstrumentBarsCmd,
+    GetExInstrumentQuoteCmd,
+)
 from .protocol.commands.mac_ext import (
     MacAuctionCmd,
     MacBelongBoardCmd,
@@ -284,6 +287,46 @@ def _fields_tag(bits: Sequence[int] | None) -> str:
 def _bit(fields: dict[str, float], bit: int) -> float:
     """取字段位值（协议层键形如 ``"0x7"``）。"""
     return float(fields.get(hex(bit), 0.0))
+
+
+# 可能带盘口的 EX 市场（期货/期权/外汇/贵金属类）——0x23FA 只对这类标的逐个补盘口。
+# 股票/指数类（hk/us/hk_index 等）0x23FA 盘口恒为 0（实测），不浪费往返。
+_EX_ORDERBOOK_MARKETS: frozenset[int] = frozenset({
+    int(m) for m in (
+        ExMarket.ZZ_FUTURES_OPTION, ExMarket.DL_FUTURES_OPTION,
+        ExMarket.SH_FUTURES_OPTION, ExMarket.CFFEX_OPTION,
+        ExMarket.SH_STOCK_OPTION, ExMarket.SZ_STOCK_OPTION,
+        ExMarket.BASIC_FX, ExMarket.CROSS_FX,
+        ExMarket.COMEX_FUTURES, ExMarket.NYMEX_FUTURES, ExMarket.CBOT_FUTURES,
+        ExMarket.HK_FINANCIAL_FUTURES, ExMarket.HK_FINANCIAL_OPTIONS,
+        ExMarket.HK_STOCK_FUTURES, ExMarket.HK_STOCK_OPTIONS,
+        ExMarket.ZZ_FUTURES, ExMarket.DL_FUTURES, ExMarket.SH_FUTURES,
+        ExMarket.SH_GOLD, ExMarket.CFFEX_FUTURES,
+        ExMarket.FUTURES_INDEX, ExMarket.MAIN_FUTURES_CONTRACT,
+        ExMarket.GZ_ARBITRAGE_FUTURES, ExMarket.GZ_FUTURES, ExMarket.GZ_OPTIONS,
+    )
+})
+
+
+async def _fill_ex_orderbook(api: "TdxData", quotes: list[SecurityQuote]) -> None:
+    """对期货/期权类 EX 报价逐个发 0x23FA，把盘口合并进 ``bid``/``ask``（就地修改）。
+
+    0x23FA 是单标的命令（无批量形态）；无盘口或命令失败时保持空列表静默跳过，
+    不让盘口缺失拖垮整个报价批量。
+    """
+    targets = [q for q in quotes if int(q.market) in _EX_ORDERBOOK_MARKETS]
+    if not targets:
+        return
+    for q in targets:
+        try:
+            row = await api._execute_ex(GetExInstrumentQuoteCmd(int(q.market), q.code))
+        except Exception:
+            continue
+        if isinstance(row, dict) and (row.get("bid") or row.get("ask")):
+            bid = row.get("bid") or []
+            ask = row.get("ask") or []
+            q.bid = list(bid)
+            q.ask = list(ask)
 
 
 def _quote_from_member(mq: MemberQuote) -> SecurityQuote:
@@ -644,6 +687,8 @@ class TdxData:
                 rows = await self._execute_ex(
                     MacSymbolQuotesCmd([s.as_pair() for s in ex], None))
                 out.extend(_quote_from_member(m) for m in rows)
+                # 期货/期权类补 0x23FA 盘口（bid/ask）——0x122B 无盘口字段
+                await _fill_ex_orderbook(self, out)
         else:
             batches = [syms[i:i + _QUOTE_PAGE]
                        for i in range(0, len(syms), _QUOTE_PAGE)]

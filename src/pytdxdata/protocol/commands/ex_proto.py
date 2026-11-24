@@ -158,10 +158,20 @@ class GetExInstrumentQuoteCmd(BaseCommand[dict | None]):
         off += 36
         zongliang, xianliang = ints[2], ints[3]
         price = fields[4]
+        # 盘口（偏移 70 起，实测 body 300B）：买5价+买5量+卖5价+卖5量。
+        # 期权=完整五档；期货=仅一档（2~5档为0）；股票/指数=全0（无盘口）。
+        # 按价>0 过滤有效档位，天然兼容三种形态。
+        bid_px = struct.unpack("<5f", body[70:90])
+        bid_vol = struct.unpack("<5I", body[90:110])
+        ask_px = struct.unpack("<5f", body[110:130])
+        ask_vol = struct.unpack("<5I", body[130:150])
+        bid = [(p, float(v)) for p, v in zip(bid_px, bid_vol) if p > 0]
+        ask = [(p, float(v)) for p, v in zip(ask_px, ask_vol) if p > 0]
         return {
             "market": self.market,
             "code": self.code,
             "pre_close": fields[0], "open": fields[1],
             "high": fields[2], "low": fields[3], "price": price,
             "zongliang": zongliang, "xianliang": xianliang,
+            "bid": bid, "ask": ask,
         }
